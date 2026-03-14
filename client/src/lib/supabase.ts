@@ -38,6 +38,26 @@ export type HardwareProfile = {
   created_at: string;
 };
 
+export type LlmProvider = {
+  id: string;
+  name: string;
+  provider_type: 'lmstudio_local' | 'lmstudio_network' | 'openrouter' | 'venice' | 'anthropic' | 'openai' | 'gemini' | 'custom';
+  display_name: string;
+  base_url: string | null;
+  model_id: string;
+  api_key_hint: string | null;
+  port: number | null;
+  context_length: number;
+  max_tokens: number;
+  temperature: number;
+  is_default: boolean;
+  is_active: boolean;
+  capabilities: string[];
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
 export type DatasetSample = {
   id: string;
   dataset_id: string;

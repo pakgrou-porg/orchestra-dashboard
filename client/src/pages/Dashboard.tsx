@@ -11,10 +11,12 @@ import { Dataset, HardwareProfile, ConductorProfile } from '@/lib/supabase';
 import DatasetReviewPanel from '@/components/DatasetReviewPanel';
 import CreateDatasetPanel from '@/components/CreateDatasetPanel';
 import GenerateDatasetPanel from '@/components/GenerateDatasetPanel';
+import EditDatasetPanel from '@/components/EditDatasetPanel';
+import LlmProviderManager from '@/components/LlmProviderManager';
 import {
   Database, Cpu, Bot, RefreshCw, Activity, CheckCircle2,
   AlertCircle, BarChart3, FileCode2, Shield, Server, Zap,
-  ChevronRight, Clock, GitBranch, Layers, Eye, Download, Plus, Play
+  ChevronRight, GitBranch, Eye, Download, Plus, Play, Edit2, Copy, Settings2, Clock, Layers
 } from 'lucide-react';
 
 const HERO_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-hero-bg-jQ87DWT7KT9qkuMrJQAC6d.webp';
@@ -135,7 +137,7 @@ function HorizontalBar({ label, count, max, color }: { label: string; count: num
 }
 
 // ─── Dataset Row ───────────────────────────────────────────────
-function DatasetRow({ ds, index, onReview, onGenerate }: { ds: Dataset; index: number; onReview: (ds: Dataset) => void; onGenerate: (ds: Dataset) => void }) {
+function DatasetRow({ ds, index, onReview, onGenerate, onEdit, onClone }: { ds: Dataset; index: number; onReview: (ds: Dataset) => void; onGenerate: (ds: Dataset) => void; onEdit: (ds: Dataset) => void; onClone: (ds: Dataset) => void }) {
   const [expanded, setExpanded] = useState(false);
   const taskIcon = ds.task_type === 'sql_correction' ? FileCode2 : Shield;
   const TaskIcon = taskIcon;
@@ -198,6 +200,16 @@ function DatasetRow({ ds, index, onReview, onGenerate }: { ds: Dataset; index: n
                 <Play size={11} /> Generate
               </button>
             )}
+            {ds.status === 'draft' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onEdit(ds); }}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
+                style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#F59E0B' }}
+                title="Edit dataset (DRAFT only)"
+              >
+                <Edit2 size={11} /> Edit
+              </button>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); onReview(ds); }}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
@@ -213,6 +225,14 @@ function DatasetRow({ ds, index, onReview, onGenerate }: { ds: Dataset; index: n
               title="Download all as JSONL"
             >
               <Download size={11} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onClone(ds); }}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748B' }}
+              title="Clone to new draft"
+            >
+              <Copy size={11} />
             </button>
             <ChevronRight
               size={14}
@@ -420,14 +440,40 @@ function Sidebar({ active, onNav }: { active: string; onNav: (id: string) => voi
   );
 }
 
-// ─── Main Dashboard ────────────────────────────────────────────
+// ─── Main Dashboard ─────────────────────────────────────────────
 export default function Dashboard() {
-  const { datasets, hardware, conductors, loading, error, lastRefresh, refresh } = useOrchestra();
+  const { datasets, hardware, conductors, llmProviders, loading, error, lastRefresh, refresh } = useOrchestra();
   const [activeSection, setActiveSection] = useState('overview');
   const [reviewDataset, setReviewDataset] = useState<Dataset | null>(null);
   const [showCreateDataset, setShowCreateDataset] = useState(false);
   const [generateDataset, setGenerateDataset] = useState<Dataset | null>(null);
+  const [editDataset, setEditDataset] = useState<Dataset | null>(null);
+  const [showProviderManager, setShowProviderManager] = useState(false);
 
+  const handleCloneDataset = async (ds: Dataset) => {
+    const { supabase } = await import('@/lib/supabase');
+    // Find a unique copy name
+    const existingNames = datasets.map(d => d.name);
+    let copyName = `${ds.name}-copy1`;
+    let n = 1;
+    while (existingNames.includes(copyName)) { n++; copyName = `${ds.name}-copy${n}`; }
+    const clone = {
+      name: copyName,
+      version: ds.version,
+      description: ds.description ? `${ds.description} (clone of ${ds.name})` : `Clone of ${ds.name}`,
+      status: 'draft',
+      task_type: ds.task_type,
+      metric_type: ds.metric_type,
+      num_train: ds.num_train,
+      num_eval: ds.num_eval,
+      train_path: `./datasets/${copyName}/train.jsonl`,
+      eval_path: `./datasets/${copyName}/eval.jsonl`,
+      format: ds.format || 'jsonl',
+      generation_config: ds.generation_config || {},
+    };
+    await supabase.from('datasets').insert(clone);
+    refresh();
+  };
   const totalSamples = datasets.reduce((s, d) => s + d.num_train + d.num_eval, 0);
   const activeDatasets = datasets.filter(d => d.status === 'active').length;
 
@@ -453,6 +499,20 @@ export default function Dashboard() {
           dataset={generateDataset}
           onClose={() => setGenerateDataset(null)}
           onGenerated={() => { setGenerateDataset(null); refresh(); }}
+        />
+      )}
+      {editDataset && (
+        <EditDatasetPanel
+          dataset={editDataset}
+          onClose={() => setEditDataset(null)}
+          onSaved={() => { setEditDataset(null); refresh(); }}
+        />
+      )}
+      {showProviderManager && (
+        <LlmProviderManager
+          providers={llmProviders}
+          onClose={() => setShowProviderManager(false)}
+          onRefresh={refresh}
         />
       )}
       <Sidebar active={activeSection} onNav={scrollTo} />
@@ -486,6 +546,15 @@ export default function Dashboard() {
                 Refreshed {lastRefresh.toLocaleTimeString()}
               </span>
             )}
+            <button
+              onClick={() => setShowProviderManager(true)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded transition-all"
+              style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.25)', color: '#7C3AED' }}
+              title="Manage LLM Providers"
+            >
+              <Settings2 size={12} />
+              {llmProviders.filter(p => p.is_active).length} Provider{llmProviders.filter(p => p.is_active).length !== 1 ? 's' : ''}
+            </button>
             <button
               onClick={refresh}
               disabled={loading}
@@ -579,7 +648,7 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {datasets.map((ds, i) => <DatasetRow key={ds.id} ds={ds} index={i} onReview={setReviewDataset} onGenerate={setGenerateDataset} />)}
+                    {datasets.map((ds, i) => <DatasetRow key={ds.id} ds={ds} index={i} onReview={setReviewDataset} onGenerate={setGenerateDataset} onEdit={setEditDataset} onClone={handleCloneDataset} />)}
                   </tbody>
                 </table>
               </div>

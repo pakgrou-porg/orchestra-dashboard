@@ -41,6 +41,15 @@ export interface AIAnalysis {
   recommended_categories?: { label: string; count: number; color: string }[];
 }
 
+export interface LlmProviderConfig {
+  provider_type: string;
+  base_url: string | null;
+  port: number | null;
+  model_id: string;
+  api_key_hint: string | null;
+  display_name: string;
+}
+
 interface Props {
   // Current wizard state (read-only snapshot passed in)
   taskType: string;
@@ -52,6 +61,8 @@ interface Props {
   categories: { label: string; count: number; color: string }[];
   description: string;
   accentColor: string;
+  // Optional: configured LLM provider to use for analysis
+  llmProvider?: LlmProviderConfig | null;
   // Callbacks to apply suggestions back to wizard state
   onApplySystemPrompt: (prompt: string) => void;
   onApplyTaskType: (type: string) => void;
@@ -73,11 +84,24 @@ const SEVERITY_META = {
   optional:    { label: 'Optional',     color: '#06B6D4', bg: 'rgba(6,182,212,0.08)'   },
 };
 
-// ── Forge API call ─────────────────────────────────────────────
+// ── Build API endpoint from provider config ───────────────────
+function buildApiEndpoint(provider?: LlmProviderConfig | null): { url: string; key: string; model: string } {
+  if (!provider) {
+    // Fallback to Forge
+    const base = import.meta.env.VITE_FRONTEND_FORGE_API_URL || 'https://forge.butterfly-effect.dev';
+    return { url: `${base}/v1/chat/completions`, key: import.meta.env.VITE_FRONTEND_FORGE_API_KEY || '', model: 'claude-3-5-sonnet' };
+  }
+  let baseUrl = provider.base_url || '';
+  const port = provider.port;
+  if (port && !baseUrl.includes(`:${port}`)) baseUrl = `${baseUrl}:${port}`;
+  // Ensure /v1 path
+  if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/v1/')) baseUrl = `${baseUrl}/v1`;
+  return { url: `${baseUrl}/chat/completions`, key: provider.api_key_hint || '', model: provider.model_id };
+}
+
+// ── LLM API call ───────────────────────────────────────────────
 async function analyseWithAI(props: Omit<Props, 'accentColor' | 'onApplySystemPrompt' | 'onApplyTaskType' | 'onApplyMetric' | 'onApplyCategories' | 'onContinue' | 'onSkip'>): Promise<AIAnalysis> {
-  const forgeBase = import.meta.env.VITE_FRONTEND_FORGE_API_URL || 'https://forge.butterfly-effect.dev';
-  const forgeUrl = `${forgeBase}/v1`;
-  const forgeKey = import.meta.env.VITE_FRONTEND_FORGE_API_KEY;
+  const { url: forgeUrl, key: forgeKey, model: forgeModel } = buildApiEndpoint(props.llmProvider);
 
   const systemMsg = `You are an expert ML dataset architect specialising in fine-tuning small LLMs for specialised tasks.
 You analyse dataset configurations for the Orchestra autoresearch framework and provide structured, actionable improvement suggestions.
@@ -137,7 +161,7 @@ Focus especially on:
       'Authorization': `Bearer ${forgeKey}`,
     },
     body: JSON.stringify({
-      model: 'claude-3-5-sonnet',
+      model: forgeModel,
       messages: [
         { role: 'system', content: systemMsg },
         { role: 'user', content: userMsg },
@@ -258,8 +282,16 @@ export default function AIRefinePanel(props: Props) {
             <div className="text-sm font-medium text-slate-200 mb-1">Ready to analyse your configuration</div>
             <div className="text-xs text-slate-500 max-w-sm">
               The AI will review your system prompt, task type, metric, and category distribution
-              and suggest targeted improvements — especially important for novel task types like OSquery generation.
+              and suggest targeted improvements.
             </div>
+          </div>
+          {/* Provider info */}
+          <div className="text-xs px-3 py-2 rounded w-full text-left" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+            {props.llmProvider ? (
+              <span className="text-slate-400">Using: <span style={{ color: accentColor }} className="metric-value">{props.llmProvider.display_name}</span> — <span className="text-slate-500 metric-value">{props.llmProvider.model_id}</span></span>
+            ) : (
+              <span className="text-slate-500">No provider configured — using built-in Forge API. <span className="text-slate-600">Add a provider in LLM Provider Manager for better results.</span></span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button
