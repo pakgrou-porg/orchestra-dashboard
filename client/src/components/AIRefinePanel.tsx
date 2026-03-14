@@ -13,6 +13,7 @@
       apply all at once, then continue to the Review step.
    ============================================================= */
 import { useState, useCallback } from 'react';
+import { buildChatEndpoint, buildHeaders, parseJsonResponse } from '@/lib/llmProvider';
 import {
   Sparkles, Loader2, CheckCircle2, AlertCircle, RefreshCw,
   ChevronRight, ChevronDown, Check, X, Lightbulb,
@@ -85,23 +86,29 @@ const SEVERITY_META = {
 };
 
 // ── Build API endpoint from provider config ───────────────────
-function buildApiEndpoint(provider?: LlmProviderConfig | null): { url: string; key: string; model: string } {
+// Delegates to shared llmProvider utility to avoid double /v1 and port injection bugs.
+function buildApiEndpoint(provider?: LlmProviderConfig | null): { url: string; headers: Record<string, string>; model: string } {
   if (!provider) {
-    // Fallback to Forge
-    const base = import.meta.env.VITE_FRONTEND_FORGE_API_URL || 'https://forge.butterfly-effect.dev';
-    return { url: `${base}/v1/chat/completions`, key: import.meta.env.VITE_FRONTEND_FORGE_API_KEY || '', model: 'claude-3-5-sonnet' };
+    // Fallback to Forge when no provider is configured
+    const base = (import.meta.env.VITE_FRONTEND_FORGE_API_URL || 'https://forge.butterfly-effect.dev').replace(/\/v1\/?$/, '');
+    return {
+      url: `${base}/v1/chat/completions`,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_FRONTEND_FORGE_API_KEY || ''}` },
+      model: 'claude-3-5-sonnet',
+    };
   }
-  let baseUrl = provider.base_url || '';
-  const port = provider.port;
-  if (port && !baseUrl.includes(`:${port}`)) baseUrl = `${baseUrl}:${port}`;
-  // Ensure /v1 path
-  if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/v1/')) baseUrl = `${baseUrl}/v1`;
-  return { url: `${baseUrl}/chat/completions`, key: provider.api_key_hint || '', model: provider.model_id };
+  // Cast to LlmProvider shape expected by shared utility
+  const lp = provider as Parameters<typeof buildChatEndpoint>[0];
+  return {
+    url: buildChatEndpoint(lp),
+    headers: buildHeaders(lp),
+    model: provider.model_id,
+  };
 }
 
 // ── LLM API call ───────────────────────────────────────────────
 async function analyseWithAI(props: Omit<Props, 'accentColor' | 'onApplySystemPrompt' | 'onApplyTaskType' | 'onApplyMetric' | 'onApplyCategories' | 'onContinue' | 'onSkip'>): Promise<AIAnalysis> {
-  const { url: forgeUrl, key: forgeKey, model: forgeModel } = buildApiEndpoint(props.llmProvider);
+  // endpoint is built just before the fetch call below
 
   const systemMsg = `You are an expert ML dataset architect specialising in fine-tuning small LLMs for specialised tasks.
 You analyse dataset configurations for the Orchestra autoresearch framework and provide structured, actionable improvement suggestions.
@@ -154,14 +161,12 @@ Focus especially on:
 4. Whether the eval sample count (${props.numEval}) is sufficient for the metric
 5. MITRE ATT&CK coverage in categories`;
 
-  const resp = await fetch(`${forgeUrl}/chat/completions`, {
+  const { url: endpointUrl, headers: endpointHeaders, model: endpointModel } = buildApiEndpoint(props.llmProvider);
+  const resp = await fetch(endpointUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${forgeKey}`,
-    },
+    headers: endpointHeaders,
     body: JSON.stringify({
-      model: forgeModel,
+      model: endpointModel,
       messages: [
         { role: 'system', content: systemMsg },
         { role: 'user', content: userMsg },
@@ -173,20 +178,19 @@ Focus especially on:
 
   if (!resp.ok) {
     const err = await resp.text();
-    throw new Error(`AI API error ${resp.status}: ${err.slice(0, 200)}`);
+    // Truncate HTML error pages
+    const preview = err.startsWith('<!') ? `HTTP ${resp.status} — server returned HTML (check endpoint URL)` : err.slice(0, 300);
+    throw new Error(`AI API error ${resp.status}: ${preview}`);
   }
 
   const data = await resp.json();
   const content = data.choices?.[0]?.message?.content || '';
-
-  // Extract JSON from the response (handle markdown code blocks)
-  const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, content];
-  const jsonStr = jsonMatch[1].trim();
+  if (!content) throw new Error('AI API returned empty response');
 
   try {
-    const parsed = JSON.parse(jsonStr) as AIAnalysis;
+    const parsed = parseJsonResponse<AIAnalysis>(content);
     // Ensure applied flag is set
-    parsed.suggestions = parsed.suggestions.map(s => ({ ...s, applied: false }));
+    parsed.suggestions = (parsed.suggestions || []).map(s => ({ ...s, applied: false }));
     return parsed;
   } catch {
     throw new Error('AI returned invalid JSON. Please try again.');

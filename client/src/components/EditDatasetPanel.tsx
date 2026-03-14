@@ -9,6 +9,7 @@
  * ============================================================= */
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, Dataset, LlmProvider } from '@/lib/supabase';
+import { buildChatEndpoint, buildHeaders, parseJsonResponse } from '@/lib/llmProvider';
 import {
   X, Save, AlertCircle, CheckCircle2, Sparkles, Loader2,
   RefreshCw, ChevronDown, ChevronUp, Check
@@ -112,27 +113,9 @@ Assess quality and provide an improved system prompt. Focus on:
 3. Any missing constraints or success criteria`;
 
     try {
-      // Build the endpoint from the provider config
-      let baseUrl = provider.base_url || '';
-      if (!baseUrl) {
-        const typeMap: Record<string, string> = {
-          lmstudio_local:   'http://localhost:1234',
-          openrouter:       'https://openrouter.ai/api',
-          venice:           'https://api.venice.ai/api',
-          anthropic:        'https://api.anthropic.com',
-          openai:           'https://api.openai.com',
-          gemini:           'https://generativelanguage.googleapis.com/v1beta/openai',
-          custom:           'http://localhost:1234',
-        };
-        baseUrl = typeMap[provider.provider_type] || 'http://localhost:1234';
-      }
-      if (provider.port && !baseUrl.includes(':' + provider.port)) {
-        baseUrl = baseUrl.replace(/:\d+$/, '') + ':' + provider.port;
-      }
-      const endpoint = baseUrl.replace(/\/$/, '') + '/v1/chat/completions';
-
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (provider.api_key_hint) headers['Authorization'] = `Bearer ${provider.api_key_hint}`;
+      // Use shared utility — avoids double /v1 and incorrect port injection
+      const endpoint = buildChatEndpoint(provider);
+      const headers  = buildHeaders(provider);
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -150,14 +133,14 @@ Assess quality and provide an improved system prompt. Focus on:
 
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(`AI API error ${res.status}: ${txt.slice(0, 200)}`);
+        const preview = txt.startsWith('<!') ? `HTTP ${res.status} — server returned HTML (check endpoint URL)` : txt.slice(0, 300);
+        throw new Error(`AI API error ${res.status}: ${preview}`);
       }
 
       const data = await res.json();
       const raw = data.choices?.[0]?.message?.content || '';
-      // Strip markdown code fences if present
-      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-      const parsed: RefineResult = JSON.parse(cleaned);
+      if (!raw) throw new Error('AI API returned empty response');
+      const parsed: RefineResult = parseJsonResponse<RefineResult>(raw);
       setResult(parsed);
       setState('done');
     } catch (err: unknown) {
