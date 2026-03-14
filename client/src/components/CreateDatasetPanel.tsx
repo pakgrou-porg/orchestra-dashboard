@@ -11,6 +11,7 @@
    ============================================================= */
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import AIRefinePanel from '@/components/AIRefinePanel';
 import {
   X, ChevronRight, ChevronLeft, Check, Loader2,
   FileCode2, Shield, Brain, BarChart3, FolderOpen,
@@ -127,7 +128,8 @@ const STEPS = [
   { id: 2, label: 'Task', icon: BarChart3 },
   { id: 3, label: 'Generation', icon: Sparkles },
   { id: 4, label: 'Paths', icon: FolderOpen },
-  { id: 5, label: 'Review', icon: Check },
+  { id: 5, label: 'AI Refine', icon: Sparkles },
+  { id: 6, label: 'Review', icon: Check },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -203,6 +205,7 @@ export default function CreateDatasetPanel({ onClose, onCreated }: Props) {
       case 2: return form.task_type !== 'custom' || form.custom_task_type.trim().length > 0;
       case 3: return form.num_train >= 10 && form.num_eval >= 5 && form.categories.length > 0;
       case 4: return form.train_path.trim().length > 0 && form.eval_path.trim().length > 0;
+      case 5: return true; // AI Refine is always skippable
       default: return true;
     }
   };
@@ -351,6 +354,25 @@ export default function CreateDatasetPanel({ onClose, onCreated }: Props) {
           {step === 3 && <Step3Generation form={form} set={set} accentColor={accentColor} />}
           {step === 4 && <Step4Paths form={form} set={set} accentColor={accentColor} />}
           {step === 5 && (
+            <AIRefinePanel
+              taskType={form.task_type === 'custom' ? form.custom_task_type : form.task_type}
+              metricType={form.metric_type === 'custom' ? form.custom_metric_type : form.metric_type}
+              systemPromptTemplate={form.system_prompt_template}
+              modelHint={form.model_hint}
+              numTrain={form.num_train}
+              numEval={form.num_eval}
+              categories={form.categories}
+              description={form.description}
+              accentColor={accentColor}
+              onApplySystemPrompt={(p) => set('system_prompt_template', p)}
+              onApplyTaskType={(t) => set('task_type', t as TaskType)}
+              onApplyMetric={(m) => set('metric_type', m as MetricType)}
+              onApplyCategories={(cats) => set('categories', cats)}
+              onContinue={() => setStep(6)}
+              onSkip={() => setStep(6)}
+            />
+          )}
+          {step === 6 && (
             <Step5Review
               form={form}
               accentColor={accentColor}
@@ -381,7 +403,8 @@ export default function CreateDatasetPanel({ onClose, onCreated }: Props) {
                 <AlertCircle size={12} /> {saveError}
               </div>
             )}
-            {step < 5 ? (
+            {/* Step 5 (AI Refine) hides the footer Next button — the panel has its own CTAs */}
+            {step === 5 ? null : step < 6 ? (
               <button
                 onClick={() => setStep(s => s + 1)}
                 disabled={!stepValid(step)}

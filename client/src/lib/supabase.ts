@@ -18,6 +18,8 @@ export type Dataset = {
   eval_path: string;
   num_train: number;
   num_eval: number;
+  format: string;
+  generation_config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
