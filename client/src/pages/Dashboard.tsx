@@ -10,10 +10,11 @@ import { useOrchestra } from '@/hooks/useOrchestra';
 import { Dataset, HardwareProfile, ConductorProfile } from '@/lib/supabase';
 import DatasetReviewPanel from '@/components/DatasetReviewPanel';
 import CreateDatasetPanel from '@/components/CreateDatasetPanel';
+import GenerateDatasetPanel from '@/components/GenerateDatasetPanel';
 import {
   Database, Cpu, Bot, RefreshCw, Activity, CheckCircle2,
   AlertCircle, BarChart3, FileCode2, Shield, Server, Zap,
-  ChevronRight, Clock, GitBranch, Layers, Eye, Download, Plus
+  ChevronRight, Clock, GitBranch, Layers, Eye, Download, Plus, Play
 } from 'lucide-react';
 
 const HERO_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-hero-bg-jQ87DWT7KT9qkuMrJQAC6d.webp';
@@ -51,7 +52,10 @@ function LiveClock() {
 
 // ─── Status Badge ──────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
-  const cls = status === 'active' ? 'badge-active' : status === 'draft' ? 'badge-draft' : 'badge-retired';
+  const cls = status === 'active' ? 'badge-active'
+    : status === 'draft' ? 'badge-draft'
+    : status === 'generating' ? 'badge-generating'
+    : 'badge-retired';
   return <span className={cls}>{status}</span>;
 }
 
@@ -131,7 +135,7 @@ function HorizontalBar({ label, count, max, color }: { label: string; count: num
 }
 
 // ─── Dataset Row ───────────────────────────────────────────────
-function DatasetRow({ ds, index, onReview }: { ds: Dataset; index: number; onReview: (ds: Dataset) => void }) {
+function DatasetRow({ ds, index, onReview, onGenerate }: { ds: Dataset; index: number; onReview: (ds: Dataset) => void; onGenerate: (ds: Dataset) => void }) {
   const [expanded, setExpanded] = useState(false);
   const taskIcon = ds.task_type === 'sql_correction' ? FileCode2 : Shield;
   const TaskIcon = taskIcon;
@@ -184,6 +188,16 @@ function DatasetRow({ ds, index, onReview }: { ds: Dataset; index: number; onRev
         <td className="py-3 px-4"><StatusBadge status={ds.status} /></td>
         <td className="py-3 px-4">
           <div className="flex items-center gap-2">
+            {(ds.status === 'draft' || ds.status === 'generating') && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onGenerate(ds); }}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
+                style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', color: '#10B981' }}
+                title="Generate dataset samples"
+              >
+                <Play size={11} /> Generate
+              </button>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); onReview(ds); }}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
@@ -412,6 +426,7 @@ export default function Dashboard() {
   const [activeSection, setActiveSection] = useState('overview');
   const [reviewDataset, setReviewDataset] = useState<Dataset | null>(null);
   const [showCreateDataset, setShowCreateDataset] = useState(false);
+  const [generateDataset, setGenerateDataset] = useState<Dataset | null>(null);
 
   const totalSamples = datasets.reduce((s, d) => s + d.num_train + d.num_eval, 0);
   const activeDatasets = datasets.filter(d => d.status === 'active').length;
@@ -431,6 +446,13 @@ export default function Dashboard() {
         <CreateDatasetPanel
           onClose={() => setShowCreateDataset(false)}
           onCreated={() => { setShowCreateDataset(false); refresh(); }}
+        />
+      )}
+      {generateDataset && (
+        <GenerateDatasetPanel
+          dataset={generateDataset}
+          onClose={() => setGenerateDataset(null)}
+          onGenerated={() => { setGenerateDataset(null); refresh(); }}
         />
       )}
       <Sidebar active={activeSection} onNav={scrollTo} />
@@ -557,7 +579,7 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {datasets.map((ds, i) => <DatasetRow key={ds.id} ds={ds} index={i} onReview={setReviewDataset} />)}
+                    {datasets.map((ds, i) => <DatasetRow key={ds.id} ds={ds} index={i} onReview={setReviewDataset} onGenerate={setGenerateDataset} />)}
                   </tbody>
                 </table>
               </div>

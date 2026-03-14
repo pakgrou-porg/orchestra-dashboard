@@ -75,7 +75,8 @@ const SEVERITY_META = {
 
 // ── Forge API call ─────────────────────────────────────────────
 async function analyseWithAI(props: Omit<Props, 'accentColor' | 'onApplySystemPrompt' | 'onApplyTaskType' | 'onApplyMetric' | 'onApplyCategories' | 'onContinue' | 'onSkip'>): Promise<AIAnalysis> {
-  const forgeUrl = import.meta.env.VITE_FRONTEND_FORGE_API_URL;
+  const forgeBase = import.meta.env.VITE_FRONTEND_FORGE_API_URL || 'https://forge.butterfly-effect.dev';
+  const forgeUrl = `${forgeBase}/v1`;
   const forgeKey = import.meta.env.VITE_FRONTEND_FORGE_API_KEY;
 
   const systemMsg = `You are an expert ML dataset architect specialising in fine-tuning small LLMs for specialised tasks.

@@ -13,7 +13,7 @@ export type Dataset = {
   task_type: string;
   metric_type: string;
   description: string;
-  status: 'active' | 'draft' | 'retired';
+  status: 'active' | 'draft' | 'retired' | 'generating';
   train_path: string;
   eval_path: string;
   num_train: number;
