@@ -8,10 +8,11 @@
 import { useEffect, useState } from 'react';
 import { useOrchestra } from '@/hooks/useOrchestra';
 import { Dataset, HardwareProfile, ConductorProfile } from '@/lib/supabase';
+import DatasetReviewPanel from '@/components/DatasetReviewPanel';
 import {
   Database, Cpu, Bot, RefreshCw, Activity, CheckCircle2,
   AlertCircle, BarChart3, FileCode2, Shield, Server, Zap,
-  ChevronRight, Clock, GitBranch, Layers
+  ChevronRight, Clock, GitBranch, Layers, Eye, Download
 } from 'lucide-react';
 
 const HERO_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-hero-bg-jQ87DWT7KT9qkuMrJQAC6d.webp';
@@ -129,10 +130,28 @@ function HorizontalBar({ label, count, max, color }: { label: string; count: num
 }
 
 // ─── Dataset Row ───────────────────────────────────────────────
-function DatasetRow({ ds, index }: { ds: Dataset; index: number }) {
+function DatasetRow({ ds, index, onReview }: { ds: Dataset; index: number; onReview: (ds: Dataset) => void }) {
   const [expanded, setExpanded] = useState(false);
   const taskIcon = ds.task_type === 'sql_correction' ? FileCode2 : Shield;
   const TaskIcon = taskIcon;
+
+  const downloadAll = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const { supabase } = await import('@/lib/supabase');
+    const { data } = await supabase
+      .from('dataset_samples')
+      .select('split,index,system_prompt,user_prompt,assistant_response')
+      .eq('dataset_id', ds.id)
+      .order('split').order('index');
+    if (!data) return;
+    const jsonl = data.map(s => JSON.stringify({ system: s.system_prompt, user: s.user_prompt, assistant: s.assistant_response })).join('\n');
+    const blob = new Blob([jsonl], { type: 'application/jsonlines' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${ds.name}_all.jsonl`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
       <tr
@@ -163,11 +182,29 @@ function DatasetRow({ ds, index }: { ds: Dataset; index: number }) {
         </td>
         <td className="py-3 px-4"><StatusBadge status={ds.status} /></td>
         <td className="py-3 px-4">
-          <ChevronRight
-            size={14}
-            className="text-slate-600 transition-transform"
-            style={{ transform: expanded ? 'rotate(90deg)' : 'none' }}
-          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); onReview(ds); }}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
+              style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)', color: '#06B6D4' }}
+              title="Review samples"
+            >
+              <Eye size={11} /> Review
+            </button>
+            <button
+              onClick={downloadAll}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748B' }}
+              title="Download all as JSONL"
+            >
+              <Download size={11} />
+            </button>
+            <ChevronRight
+              size={14}
+              className="text-slate-600 transition-transform"
+              style={{ transform: expanded ? 'rotate(90deg)' : 'none' }}
+            />
+          </div>
         </td>
       </tr>
       {expanded && (
@@ -372,6 +409,7 @@ function Sidebar({ active, onNav }: { active: string; onNav: (id: string) => voi
 export default function Dashboard() {
   const { datasets, hardware, conductors, loading, error, lastRefresh, refresh } = useOrchestra();
   const [activeSection, setActiveSection] = useState('overview');
+  const [reviewDataset, setReviewDataset] = useState<Dataset | null>(null);
 
   const totalSamples = datasets.reduce((s, d) => s + d.num_train + d.num_eval, 0);
   const activeDatasets = datasets.filter(d => d.status === 'active').length;
@@ -384,6 +422,9 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen" style={{ background: '#070B14' }}>
+      {reviewDataset && (
+        <DatasetReviewPanel dataset={reviewDataset} onClose={() => setReviewDataset(null)} />
+      )}
       <Sidebar active={activeSection} onNav={scrollTo} />
 
       {/* Main content */}
@@ -499,7 +540,7 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {datasets.map((ds, i) => <DatasetRow key={ds.id} ds={ds} index={i} />)}
+                    {datasets.map((ds, i) => <DatasetRow key={ds.id} ds={ds} index={i} onReview={setReviewDataset} />)}
                   </tbody>
                 </table>
               </div>

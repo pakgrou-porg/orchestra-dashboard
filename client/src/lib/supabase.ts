@@ -36,6 +36,18 @@ export type HardwareProfile = {
   created_at: string;
 };
 
+export type DatasetSample = {
+  id: string;
+  dataset_id: string;
+  split: 'train' | 'eval';
+  index: number;
+  system_prompt: string;
+  user_prompt: string;
+  assistant_response: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
 export type ConductorProfile = {
   id: string;
   name: string;
