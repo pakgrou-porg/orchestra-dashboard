@@ -7,7 +7,8 @@ import { useState } from 'react';
 import { supabase, LlmProvider } from '@/lib/supabase';
 import {
   X, Plus, Trash2, CheckCircle2, AlertCircle, Wifi, Globe,
-  Server, Key, Edit2, Save, ToggleLeft, ToggleRight, Star, StarOff
+  Server, Key, Edit2, Save, ToggleLeft, ToggleRight, Star, StarOff,
+  Zap, Loader2
 } from 'lucide-react';
 
 const PROVIDER_TYPES = [
@@ -26,11 +27,19 @@ type ProviderTypeValue = typeof PROVIDER_TYPES[number]['value'];
 const POPULAR_MODELS: Record<ProviderTypeValue, string[]> = {
   lmstudio_local: ['local-model', 'llama-3.2-3b-instruct', 'qwen2.5-7b-instruct', 'phi-4-mini'],
   lmstudio_network: ['local-model', 'llama-3.2-3b-instruct', 'qwen2.5-7b-instruct'],
-  openrouter: ['qwen/qwen-2.5-72b-instruct', 'qwen/qwen3.5-397b', 'meta-llama/llama-3.3-70b-instruct', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.0-flash-001'],
-  venice: ['llama-3.3-70b', 'mistral-31-24b', 'qwen-2.5-vl-72b'],
-  anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-3-5'],
-  openai: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini'],
-  gemini: ['gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash'],
+  openrouter: [
+    'anthropic/claude-3.7-sonnet',
+    'anthropic/claude-3.5-haiku',
+    'openai/gpt-4o',
+    'google/gemini-2.0-flash-001',
+    'deepseek/deepseek-chat-v3-0324',
+    'meta-llama/llama-3.3-70b-instruct',
+    'qwen/qwen-2.5-72b-instruct',
+  ],
+  venice: ['llama-3.3-70b', 'deepseek-r1-671b', 'mistral-31-24b', 'qwen-2.5-vl-72b'],
+  anthropic: ['claude-3-7-sonnet-20250219', 'claude-3-5-haiku-20241022', 'claude-3-5-sonnet-20241022'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1'],
+  gemini: ['gemini-2.5-pro-preview-03-25', 'gemini-2.0-flash', 'gemini-2.0-pro-exp-02-05'],
   custom: [],
 };
 
@@ -175,19 +184,23 @@ function ProviderForm({
     setSaving(true);
     setError(null);
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         display_name: form.display_name.trim(),
         provider_type: form.provider_type,
         model_id: form.model_id.trim(),
         base_url: form.base_url.trim() || typeInfo.urlPlaceholder,
         port: form.port ? parseInt(form.port) : null,
-        api_key_hint: form.api_key ? `${form.api_key.slice(0, 6)}...${form.api_key.slice(-4)}` : null,
+        api_key_hint: form.api_key ? `${form.api_key.slice(0, 6)}...${form.api_key.slice(-4)}` : (initial?.api_key_hint ?? null),
         context_length: parseInt(form.context_length) || 4096,
         max_tokens: parseInt(form.max_tokens) || 2048,
         temperature: parseFloat(form.temperature) || 0.7,
         capabilities: form.capabilities,
         name: `${form.provider_type}_${form.model_id.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${Date.now()}`,
       };
+      // Store actual API key if provided (never blank out an existing key on edit)
+      if (form.api_key.trim()) {
+        payload.api_key = form.api_key.trim();
+      }
 
       let res;
       if (initial) {
@@ -322,7 +335,7 @@ function ProviderForm({
               className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
               style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
             />
-            <p className="text-xs text-slate-600 mt-1">Only the first/last 4 chars are stored as a hint. The full key is never persisted in Supabase.</p>
+            <p className="text-xs text-slate-600 mt-1">Key is stored in Supabase (RLS-protected). A masked hint is shown in the UI for reference.</p>
           </div>
         )}
 
@@ -384,6 +397,84 @@ function ProviderForm({
   );
 }
 
+// ── Quick Setup presets ───────────────────────────────────────
+const QUICK_SETUP_PRESETS = [
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    icon: '🔀',
+    color: '#7C3AED',
+    provider_type: 'openrouter' as const,
+    base_url: 'https://openrouter.ai/api/v1',
+    models: [
+      { id: 'anthropic/claude-3.7-sonnet', label: 'Claude 3.7 Sonnet' },
+      { id: 'anthropic/claude-3.5-haiku', label: 'Claude 3.5 Haiku' },
+      { id: 'openai/gpt-4o', label: 'GPT-4o' },
+      { id: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash' },
+      { id: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek Chat V3' },
+    ],
+    keyPrefix: 'sk-or-',
+    keyHint: 'sk-or-v1-...',
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    icon: '🤖',
+    color: '#EC4899',
+    provider_type: 'anthropic' as const,
+    base_url: 'https://api.anthropic.com/v1',
+    models: [
+      { id: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+      { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
+    ],
+    keyPrefix: 'sk-ant-',
+    keyHint: 'sk-ant-api03-...',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    icon: '⚡',
+    color: '#22C55E',
+    provider_type: 'openai' as const,
+    base_url: 'https://api.openai.com/v1',
+    models: [
+      { id: 'gpt-4o', label: 'GPT-4o' },
+      { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+      { id: 'o3-mini', label: 'o3-mini' },
+    ],
+    keyPrefix: 'sk-',
+    keyHint: 'sk-...',
+  },
+  {
+    id: 'google_gemini',
+    label: 'Google Gemini',
+    icon: '💎',
+    color: '#3B82F6',
+    provider_type: 'gemini' as const,
+    base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    models: [
+      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.5-pro-preview-03-25', label: 'Gemini 2.5 Pro Preview' },
+    ],
+    keyPrefix: 'AIza',
+    keyHint: 'AIzaSy...',
+  },
+  {
+    id: 'venice',
+    label: 'Venice.ai',
+    icon: '🎭',
+    color: '#F59E0B',
+    provider_type: 'venice' as const,
+    base_url: 'https://api.venice.ai/api/v1',
+    models: [
+      { id: 'llama-3.3-70b', label: 'Llama 3.3 70B' },
+      { id: 'deepseek-r1-671b', label: 'DeepSeek R1 671B' },
+    ],
+    keyPrefix: '',
+    keyHint: 'venice-...',
+  },
+];
+
 export default function LlmProviderManager({
   providers,
   onClose,
@@ -396,6 +487,57 @@ export default function LlmProviderManager({
   const [showForm, setShowForm] = useState(false);
   const [editProvider, setEditProvider] = useState<LlmProvider | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [showQuickSetup, setShowQuickSetup] = useState(false);
+  const [quickPreset, setQuickPreset] = useState<typeof QUICK_SETUP_PRESETS[0] | null>(null);
+  const [quickKey, setQuickKey] = useState('');
+  const [quickModel, setQuickModel] = useState('');
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
+  const [quickSuccess, setQuickSuccess] = useState(false);
+
+  const handleQuickSetup = async () => {
+    if (!quickPreset || !quickKey.trim() || !quickModel) {
+      setQuickError('Select a provider, choose a model, and paste your API key.');
+      return;
+    }
+    setQuickSaving(true);
+    setQuickError(null);
+    try {
+      const modelLabel = quickPreset.models.find(m => m.id === quickModel)?.label || quickModel;
+      const payload = {
+        display_name: `${quickPreset.label} — ${modelLabel}`,
+        provider_type: quickPreset.provider_type,
+        model_id: quickModel,
+        base_url: quickPreset.base_url,
+        port: null,
+        api_key: quickKey.trim(),
+        api_key_hint: `${quickKey.trim().slice(0, 8)}...${quickKey.trim().slice(-4)}`,
+        context_length: 128000,
+        max_tokens: 4096,
+        temperature: 0.3,
+        capabilities: ['chat', 'json_mode'],
+        is_active: true,
+        is_default: providers.length === 0,
+        quick_register_source: quickPreset.id,
+        name: `${quickPreset.provider_type}_${quickModel.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${Date.now()}`,
+      };
+      const { error } = await supabase.from('llm_providers').insert(payload);
+      if (error) throw new Error(error.message);
+      setQuickSuccess(true);
+      setTimeout(() => {
+        setShowQuickSetup(false);
+        setQuickPreset(null);
+        setQuickKey('');
+        setQuickModel('');
+        setQuickSuccess(false);
+        onRefresh();
+      }, 1500);
+    } catch (err: unknown) {
+      setQuickError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setQuickSaving(false);
+    }
+  };
 
   const handleDelete = async (id: string) => {
     setDeleting(id);
@@ -430,11 +572,18 @@ export default function LlmProviderManager({
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { setShowForm(true); setEditProvider(null); }}
+              onClick={() => { setShowQuickSetup(q => !q); setShowForm(false); setEditProvider(null); }}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded transition-all"
+              style={{ background: showQuickSetup ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.35)', color: '#A78BFA' }}
+            >
+              <Zap size={12} /> Quick Setup
+            </button>
+            <button
+              onClick={() => { setShowForm(true); setEditProvider(null); setShowQuickSetup(false); }}
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded transition-all"
               style={{ background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.3)', color: '#06B6D4' }}
             >
-              <Plus size={12} /> Add Provider
+              <Plus size={12} /> Manual
             </button>
             <button onClick={onClose} className="p-1.5 rounded hover:bg-white/5 transition-all" style={{ color: '#64748B' }}>
               <X size={16} />
@@ -443,6 +592,91 @@ export default function LlmProviderManager({
         </div>
 
         <div className="flex-1 p-6 space-y-6">
+          {/* Quick Setup Panel */}
+          {showQuickSetup && !showForm && !editProvider && (
+            <div className="rounded-lg p-5 space-y-4" style={{ background: 'rgba(124,58,237,0.06)', border: '1px solid rgba(124,58,237,0.25)' }}>
+              <div className="flex items-center gap-2">
+                <Zap size={14} style={{ color: '#A78BFA' }} />
+                <span style={{ fontFamily: 'Orbitron, monospace', fontSize: '0.65rem', color: '#A78BFA', letterSpacing: '0.1em' }}>QUICK SETUP — REGISTER API KEY</span>
+              </div>
+              <p className="text-xs text-slate-500">Choose a provider, pick a model, paste your API key. A provider will be created and activated automatically.</p>
+
+              {/* Provider tiles */}
+              <div className="grid grid-cols-3 gap-2">
+                {QUICK_SETUP_PRESETS.map(preset => (
+                  <button
+                    key={preset.id}
+                    onClick={() => { setQuickPreset(preset); setQuickModel(preset.models[0].id); setQuickKey(''); setQuickError(null); setQuickSuccess(false); }}
+                    className="flex flex-col items-center gap-1.5 py-3 px-2 rounded text-center transition-all"
+                    style={{
+                      background: quickPreset?.id === preset.id ? `${preset.color}18` : 'rgba(255,255,255,0.02)',
+                      border: `1px solid ${quickPreset?.id === preset.id ? preset.color + '55' : 'rgba(255,255,255,0.07)'}`,
+                    }}
+                  >
+                    <span className="text-lg">{preset.icon}</span>
+                    <span className="text-xs" style={{ color: quickPreset?.id === preset.id ? preset.color : '#64748B' }}>{preset.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {quickPreset && (
+                <>
+                  {/* Model selector */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">Model</label>
+                    <div className="grid grid-cols-1 gap-1">
+                      {quickPreset.models.map(m => (
+                        <button
+                          key={m.id}
+                          onClick={() => setQuickModel(m.id)}
+                          className="flex items-center gap-2 px-3 py-2 rounded text-left text-xs transition-all"
+                          style={{
+                            background: quickModel === m.id ? `${quickPreset.color}12` : 'rgba(255,255,255,0.02)',
+                            border: `1px solid ${quickModel === m.id ? quickPreset.color + '44' : 'rgba(255,255,255,0.07)'}`,
+                            color: quickModel === m.id ? '#E2E8F0' : '#64748B',
+                          }}
+                        >
+                          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: quickModel === m.id ? quickPreset.color : 'rgba(255,255,255,0.15)' }} />
+                          <span className="font-mono">{m.label}</span>
+                          <span className="text-slate-600 ml-auto text-xs" style={{ fontSize: '0.6rem' }}>{m.id}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* API key input */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">API Key <span className="text-slate-600">(stored in Supabase, RLS-protected)</span></label>
+                    <input
+                      type="password"
+                      value={quickKey}
+                      onChange={e => setQuickKey(e.target.value)}
+                      placeholder={quickPreset.keyHint}
+                      className="w-full px-3 py-2 rounded text-sm font-mono text-slate-200 bg-transparent outline-none"
+                      style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${quickKey ? quickPreset.color + '44' : 'rgba(255,255,255,0.1)'}` }}
+                    />
+                  </div>
+
+                  {quickError && (
+                    <div className="flex items-center gap-2 text-xs text-red-400 p-2 rounded" style={{ background: 'rgba(244,63,94,0.07)', border: '1px solid rgba(244,63,94,0.2)' }}>
+                      <AlertCircle size={11} /> {quickError}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleQuickSetup}
+                    disabled={quickSaving || quickSuccess || !quickKey.trim()}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded text-sm font-medium transition-all disabled:opacity-50"
+                    style={{ background: quickSuccess ? '#10B981' : quickPreset.color, color: '#fff' }}
+                  >
+                    {quickSaving ? <Loader2 size={14} className="animate-spin" /> : quickSuccess ? <CheckCircle2 size={14} /> : <Zap size={14} />}
+                    {quickSaving ? 'Registering…' : quickSuccess ? 'Provider Registered!' : `Register ${quickPreset.label} Provider`}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Add / Edit Form */}
           {(showForm || editProvider) && (
             <ProviderForm

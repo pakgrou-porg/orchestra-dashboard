@@ -48,6 +48,8 @@ export interface LlmProviderConfig {
   port: number | null;
   model_id: string;
   api_key_hint: string | null;
+  api_key: string | null;           // actual key for auth
+  api_key_encrypted: string | null; // legacy encrypted field
   display_name: string;
 }
 

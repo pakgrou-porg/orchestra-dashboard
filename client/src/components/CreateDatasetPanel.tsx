@@ -9,8 +9,8 @@
      4. Paths       — train/eval file paths, format
      5. Review      — summary before saving to Supabase
    ============================================================= */
-import { useState, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useState, useCallback, useEffect } from 'react';
+import { supabase, LlmProvider } from '@/lib/supabase';
 import AIRefinePanel from '@/components/AIRefinePanel';
 import {
   X, ChevronRight, ChevronLeft, Check, Loader2,
@@ -154,6 +154,20 @@ export default function CreateDatasetPanel({ onClose, onCreated }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [activeProvider, setActiveProvider] = useState<LlmProvider | null>(null);
+
+  // Load the default active provider for AI Refine
+  useEffect(() => {
+    supabase
+      .from('llm_providers')
+      .select('*')
+      .eq('is_active', true)
+      .order('is_default', { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) setActiveProvider(data[0] as LlmProvider);
+      });
+  }, []);
 
   const [form, setForm] = useState<FormData>({
     name: '',
@@ -364,6 +378,7 @@ export default function CreateDatasetPanel({ onClose, onCreated }: Props) {
               categories={form.categories}
               description={form.description}
               accentColor={accentColor}
+              llmProvider={activeProvider}
               onApplySystemPrompt={(p) => set('system_prompt_template', p)}
               onApplyTaskType={(t) => set('task_type', t as TaskType)}
               onApplyMetric={(m) => set('metric_type', m as MetricType)}

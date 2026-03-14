@@ -61,8 +61,16 @@ export function buildChatEndpoint(provider: LlmProvider): string {
 /** Build request headers for the provider */
 export function buildHeaders(provider: LlmProvider): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (provider.api_key_hint) {
-    headers['Authorization'] = `Bearer ${provider.api_key_hint}`;
+  // Prefer api_key (actual key), fall back to api_key_encrypted, then api_key_hint (masked — will fail auth)
+  const key = provider.api_key || provider.api_key_encrypted || null;
+  if (key) {
+    headers['Authorization'] = `Bearer ${key}`;
+  }
+  // Anthropic uses a different auth header
+  if (provider.provider_type === 'anthropic' && key) {
+    headers['x-api-key'] = key;
+    headers['anthropic-version'] = '2023-06-01';
+    delete headers['Authorization'];
   }
   // OpenRouter requires HTTP-Referer and X-Title for ranking
   if (provider.provider_type === 'openrouter') {

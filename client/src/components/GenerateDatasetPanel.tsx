@@ -13,10 +13,10 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   X, Play, Loader2, CheckCircle2, AlertCircle,
-  Terminal, Cpu, Zap, Database, FileText,
-  ChevronRight, Clock, BarChart3, RefreshCw
+  Terminal, Zap, Database, FileText,
+  ChevronRight, Clock, RefreshCw, Server
 } from 'lucide-react';
-import { supabase, Dataset } from '@/lib/supabase';
+import { supabase, Dataset, LlmProvider } from '@/lib/supabase';
 
 interface Props {
   dataset: Dataset;
@@ -33,15 +33,18 @@ interface GenerationPhase {
   status: 'pending' | 'running' | 'done' | 'error';
 }
 
-const MODEL_OPTIONS = [
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini', provider: 'OpenAI', speed: 'Fast' },
-  { value: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku', provider: 'Anthropic', speed: 'Fast' },
-  { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet', provider: 'Anthropic', speed: 'Medium' },
-  { value: 'gpt-4o', label: 'GPT-4o', provider: 'OpenAI', speed: 'Medium' },
-  { value: 'qwen3.5-9b', label: 'Qwen 3.5 9B', provider: 'Local / LMStudio', speed: 'Slow' },
-];
-
 const CONCURRENCY_OPTIONS = [1, 2, 4, 8];
+
+const PROVIDER_TYPE_LABELS: Record<string, string> = {
+  lmstudio_local: 'LMStudio (local)',
+  lmstudio_network: 'LMStudio (network)',
+  openrouter: 'OpenRouter',
+  venice: 'Venice.ai',
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  gemini: 'Google Gemini',
+  custom: 'Custom',
+};
 
 function buildPhases(dataset: Dataset): GenerationPhase[] {
   const total = (dataset.num_train || 170) + (dataset.num_eval || 30);
@@ -99,8 +102,10 @@ function buildPhases(dataset: Dataset): GenerationPhase[] {
 
 export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: Props) {
   const accentColor = '#06B6D4';
-  const [selectedModel, setSelectedModel] = useState('claude-3-5-haiku');
+  const [providers, setProviders] = useState<LlmProvider[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [concurrency, setConcurrency] = useState(4);
+  const [loadingProviders, setLoadingProviders] = useState(true);
   const [stage, setStage] = useState<'config' | 'running' | 'done' | 'error'>('config');
   const [phases, setPhases] = useState<GenerationPhase[]>(buildPhases(dataset));
   const [currentPhaseIdx, setCurrentPhaseIdx] = useState(-1);
@@ -186,6 +191,26 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
       onGenerated();
     }, 2000);
   };
+
+  // Load active providers from Supabase
+  useEffect(() => {
+    supabase
+      .from('llm_providers')
+      .select('*')
+      .eq('is_active', true)
+      .order('is_default', { ascending: false })
+      .then(({ data }) => {
+        const list = (data || []) as LlmProvider[];
+        setProviders(list);
+        // Auto-select default provider or first in list
+        const defaultP = list.find(p => p.is_default) || list[0];
+        if (defaultP) setSelectedProviderId(defaultP.id);
+        setLoadingProviders(false);
+      });
+  }, []);
+
+  const selectedProvider = providers.find(p => p.id === selectedProviderId) || null;
+  const selectedModel = selectedProvider?.model_id || 'unknown';
 
   const generationConfig = (dataset.generation_config as Record<string, unknown>) || {};
   const categories = (generationConfig.categories as { label: string; count: number; color: string }[]) || [];
@@ -297,42 +322,62 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
                 GENERATION PARAMETERS
               </div>
 
-              {/* Model selector */}
+              {/* Provider / Model selector */}
               <div className="space-y-2">
-                <label className="text-xs text-slate-500">Generation Model</label>
-                <div className="grid grid-cols-1 gap-1.5">
-                  {MODEL_OPTIONS.map(m => (
-                    <button
-                      key={m.value}
-                      onClick={() => setSelectedModel(m.value)}
-                      className="flex items-center justify-between px-3 py-2 rounded text-left transition-all"
-                      style={{
-                        background: selectedModel === m.value ? `${accentColor}12` : 'rgba(255,255,255,0.02)',
-                        border: `1px solid ${selectedModel === m.value ? `${accentColor}44` : 'rgba(255,255,255,0.07)'}`,
-                      }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-1.5 h-1.5 rounded-full"
-                          style={{ background: selectedModel === m.value ? accentColor : 'rgba(255,255,255,0.2)' }}
-                        />
-                        <span className="text-xs text-slate-300 font-mono">{m.label}</span>
-                        <span className="text-xs text-slate-600">{m.provider}</span>
-                      </div>
-                      <span
-                        className="text-xs px-1.5 py-0.5 rounded"
-                        style={{
-                          background: m.speed === 'Fast' ? 'rgba(16,185,129,0.1)' : m.speed === 'Medium' ? 'rgba(245,158,11,0.1)' : 'rgba(148,163,184,0.1)',
-                          color: m.speed === 'Fast' ? '#10B981' : m.speed === 'Medium' ? '#F59E0B' : '#94A3B8',
-                          fontFamily: 'JetBrains Mono, monospace',
-                          fontSize: '0.6rem',
-                        }}
-                      >
-                        {m.speed}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                <label className="text-xs text-slate-500">Generation Provider &amp; Model</label>
+                {loadingProviders ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+                    <Loader2 size={12} className="animate-spin" style={{ color: accentColor }} />
+                    Loading registered providers…
+                  </div>
+                ) : providers.length === 0 ? (
+                  <div
+                    className="flex items-start gap-2 p-3 rounded text-xs"
+                    style={{ background: 'rgba(244,63,94,0.07)', border: '1px solid rgba(244,63,94,0.2)', color: '#F43F5E' }}
+                  >
+                    <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                    No active providers found. Add a provider in the Providers panel first.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-1.5">
+                    {providers.map(p => {
+                      const isSelected = selectedProviderId === p.id;
+                      const hasKey = !!(p.api_key || p.api_key_encrypted);
+                      const provLabel = PROVIDER_TYPE_LABELS[p.provider_type] || p.provider_type;
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedProviderId(p.id)}
+                          className="flex items-center justify-between px-3 py-2 rounded text-left transition-all"
+                          style={{
+                            background: isSelected ? `${accentColor}12` : 'rgba(255,255,255,0.02)',
+                            border: `1px solid ${isSelected ? `${accentColor}44` : 'rgba(255,255,255,0.07)'}`,
+                          }}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div
+                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              style={{ background: isSelected ? accentColor : 'rgba(255,255,255,0.2)' }}
+                            />
+                            <span className="text-xs text-slate-300 font-mono truncate">{p.model_id}</span>
+                            <span className="text-xs text-slate-600 shrink-0">{provLabel}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {p.is_default && (
+                              <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.1)', color: '#F59E0B', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem' }}>DEFAULT</span>
+                            )}
+                            {!hasKey && ['openrouter','venice','anthropic','openai','gemini','custom'].includes(p.provider_type) && (
+                              <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(244,63,94,0.1)', color: '#F43F5E', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem' }}>NO KEY</span>
+                            )}
+                            {hasKey && (
+                              <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(16,185,129,0.1)', color: '#10B981', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem' }}>KEY ✓</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Concurrency */}

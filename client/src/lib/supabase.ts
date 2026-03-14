@@ -46,6 +46,9 @@ export type LlmProvider = {
   base_url: string | null;
   model_id: string;
   api_key_hint: string | null;
+  api_key: string | null;  // actual key stored in DB (use this for auth)
+  api_key_encrypted: string | null;  // legacy encrypted field
+  quick_register_source: string | null;
   port: number | null;
   context_length: number;
   max_tokens: number;
@@ -56,6 +59,18 @@ export type LlmProvider = {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+};
+
+export type ModelCatalogEntry = {
+  id: string;
+  provider_type: string;
+  model_id: string;
+  display_name: string;
+  context_length: number;
+  speed_tier: 'fast' | 'medium' | 'slow';
+  is_featured: boolean;
+  notes: string | null;
+  created_at: string;
 };
 
 export type DatasetSample = {
