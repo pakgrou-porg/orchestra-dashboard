@@ -9,10 +9,11 @@ import { useEffect, useState } from 'react';
 import { useOrchestra } from '@/hooks/useOrchestra';
 import { Dataset, HardwareProfile, ConductorProfile } from '@/lib/supabase';
 import DatasetReviewPanel from '@/components/DatasetReviewPanel';
+import CreateDatasetPanel from '@/components/CreateDatasetPanel';
 import {
   Database, Cpu, Bot, RefreshCw, Activity, CheckCircle2,
   AlertCircle, BarChart3, FileCode2, Shield, Server, Zap,
-  ChevronRight, Clock, GitBranch, Layers, Eye, Download
+  ChevronRight, Clock, GitBranch, Layers, Eye, Download, Plus
 } from 'lucide-react';
 
 const HERO_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-hero-bg-jQ87DWT7KT9qkuMrJQAC6d.webp';
@@ -410,6 +411,7 @@ export default function Dashboard() {
   const { datasets, hardware, conductors, loading, error, lastRefresh, refresh } = useOrchestra();
   const [activeSection, setActiveSection] = useState('overview');
   const [reviewDataset, setReviewDataset] = useState<Dataset | null>(null);
+  const [showCreateDataset, setShowCreateDataset] = useState(false);
 
   const totalSamples = datasets.reduce((s, d) => s + d.num_train + d.num_eval, 0);
   const activeDatasets = datasets.filter(d => d.status === 'active').length;
@@ -424,6 +426,12 @@ export default function Dashboard() {
     <div className="min-h-screen" style={{ background: '#070B14' }}>
       {reviewDataset && (
         <DatasetReviewPanel dataset={reviewDataset} onClose={() => setReviewDataset(null)} />
+      )}
+      {showCreateDataset && (
+        <CreateDatasetPanel
+          onClose={() => setShowCreateDataset(false)}
+          onCreated={() => { setShowCreateDataset(false); refresh(); }}
+        />
       )}
       <Sidebar active={activeSection} onNav={scrollTo} />
 
@@ -521,7 +529,16 @@ export default function Dashboard() {
 
           {/* ── Datasets ── */}
           <section id="section-datasets">
-            <h2 className="section-header text-sm">Dataset Registry</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="section-header text-sm" style={{ marginBottom: 0 }}>Dataset Registry</h2>
+              <button
+                onClick={() => setShowCreateDataset(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded text-xs font-medium transition-all"
+                style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.35)', color: '#06B6D4' }}
+              >
+                <Plus size={13} /> New Dataset
+              </button>
+            </div>
             {loading ? (
               <div className="glass-card rounded-lg p-8 text-center text-slate-500 text-sm">
                 <RefreshCw size={20} className="animate-spin mx-auto mb-2" style={{ color: '#06B6D4' }} />
