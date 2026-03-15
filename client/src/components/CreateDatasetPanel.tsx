@@ -156,16 +156,21 @@ export default function CreateDatasetPanel({ onClose, onCreated }: Props) {
   const [saved, setSaved] = useState(false);
   const [activeProvider, setActiveProvider] = useState<LlmProvider | null>(null);
 
-  // Load the default active provider for AI Refine
+  // Load the default active provider for AI Refine — prefer one with a real api_key
   useEffect(() => {
     supabase
       .from('llm_providers')
       .select('*')
       .eq('is_active', true)
-      .order('is_default', { ascending: false })
-      .limit(1)
       .then(({ data }) => {
-        if (data && data.length > 0) setActiveProvider(data[0] as LlmProvider);
+        if (!data || data.length === 0) return;
+        const providers = data as LlmProvider[];
+        const withKey = providers.filter(p => p.api_key && p.api_key.length > 10);
+        const best = withKey.find(p => p.is_default)
+          || withKey[0]
+          || providers.find(p => p.is_default)
+          || providers[0];
+        setActiveProvider(best);
       });
   }, []);
 

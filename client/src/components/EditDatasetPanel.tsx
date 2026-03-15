@@ -40,9 +40,10 @@ const METRICS = [
 // ── Resolve system prompt from any storage location ────────────
 function resolveSystemPrompt(dataset: Dataset): string {
   const gc = (dataset.generation_config as Record<string, unknown>) || {};
-  // Priority: generation_config.system_prompt → metadata.system_prompt → ''
-  if (gc.system_prompt && typeof gc.system_prompt === 'string' && gc.system_prompt.trim()) {
-    return gc.system_prompt;
+  // Priority: system_prompt → system_prompt_template → metadata.system_prompt → ''
+  for (const key of ['system_prompt', 'system_prompt_template']) {
+    const val = gc[key];
+    if (val && typeof val === 'string' && val.trim()) return val;
   }
   const meta = (gc.metadata as Record<string, unknown>) || {};
   if (meta.system_prompt && typeof meta.system_prompt === 'string') {
@@ -283,16 +284,22 @@ export default function EditDatasetPanel({
   const [error, setError]     = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Fetch the active (default) LLM provider
+  // Fetch the active LLM provider — prefer one with a real api_key
   useEffect(() => {
     supabase
       .from('llm_providers')
       .select('*')
       .eq('is_active', true)
-      .order('is_default', { ascending: false })
-      .limit(1)
       .then(({ data }) => {
-        if (data && data.length > 0) setActiveProvider(data[0] as LlmProvider);
+        if (!data || data.length === 0) return;
+        const providers = data as LlmProvider[];
+        // Prefer: has real api_key → is_default → first active
+        const withKey = providers.filter(p => p.api_key && p.api_key.length > 10);
+        const best = withKey.find(p => p.is_default)
+          || withKey[0]
+          || providers.find(p => p.is_default)
+          || providers[0];
+        setActiveProvider(best);
       });
   }, []);
 

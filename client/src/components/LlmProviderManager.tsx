@@ -3,7 +3,7 @@
  * Dark navy-black, glass morphism, cyan/violet neon accents
  * Orbitron headers, JetBrains Mono metrics, Inter body
  * ============================================================= */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase, LlmProvider } from '@/lib/supabase';
 import {
   X, Plus, Trash2, CheckCircle2, AlertCircle, Wifi, Globe,
@@ -87,6 +87,46 @@ function ProviderCard({
   onSetDefault: (p: LlmProvider) => void;
 }) {
   const info = providerTypeInfo(provider.provider_type);
+  const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [testMsg, setTestMsg] = useState('');
+
+  const handleTest = async () => {
+    setTestState('testing');
+    setTestMsg('');
+    try {
+      const { buildChatEndpoint, buildHeaders } = await import('@/lib/llmProvider');
+      const endpoint = buildChatEndpoint(provider);
+      const headers = buildHeaders(provider);
+      const t0 = Date.now();
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: provider.model_id,
+          messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
+          max_tokens: 8,
+          temperature: 0,
+        }),
+      });
+      const ms = Date.now() - t0;
+      if (!res.ok) {
+        const txt = await res.text();
+        const preview = txt.startsWith('<!') ? `HTTP ${res.status}` : txt.slice(0, 120);
+        throw new Error(preview);
+      }
+      const data = await res.json();
+      const reply = data.choices?.[0]?.message?.content || '(empty)';
+      setTestMsg(`${ms}ms — "${reply.trim().slice(0, 40)}"`);
+      setTestState('ok');
+    } catch (err: unknown) {
+      setTestMsg(err instanceof Error ? err.message.slice(0, 120) : 'Unknown error');
+      setTestState('fail');
+    }
+    setTimeout(() => setTestState('idle'), 8000);
+  };
+
+  const hasKey = !!(provider.api_key && provider.api_key.length > 10);
+
   return (
     <div
       className="glass-card rounded-lg p-4 relative"
@@ -107,6 +147,9 @@ function ProviderCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
             <span className="font-medium text-slate-200 text-sm truncate">{provider.display_name}</span>
+            {!hasKey && info.needsKey && (
+              <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', color: '#F59E0B' }}>NO KEY</span>
+            )}
           </div>
           <div className="text-xs metric-value truncate" style={{ color: info.color }}>{provider.model_id}</div>
           <div className="text-xs text-slate-500 mt-1">
@@ -119,11 +162,33 @@ function ProviderCard({
               <span key={cap} className="text-xs px-1.5 py-0.5 rounded metric-value" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748B' }}>{cap}</span>
             ))}
           </div>
+          {testState !== 'idle' && (
+            <div className="mt-2 text-xs px-2 py-1 rounded flex items-center gap-1.5" style={{
+              background: testState === 'ok' ? 'rgba(16,185,129,0.08)' : testState === 'fail' ? 'rgba(244,63,94,0.08)' : 'rgba(6,182,212,0.08)',
+              border: `1px solid ${testState === 'ok' ? 'rgba(16,185,129,0.25)' : testState === 'fail' ? 'rgba(244,63,94,0.25)' : 'rgba(6,182,212,0.25)'}`,
+              color: testState === 'ok' ? '#10B981' : testState === 'fail' ? '#F43F5E' : '#06B6D4',
+            }}>
+              {testState === 'testing' && <Loader2 size={10} className="animate-spin" />}
+              {testState === 'ok' && <CheckCircle2 size={10} />}
+              {testState === 'fail' && <AlertCircle size={10} />}
+              {testState === 'testing' ? 'Testing connection…' : testMsg}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
         <button onClick={() => onEdit(provider)} className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-all hover:bg-white/5" style={{ color: '#06B6D4' }}>
           <Edit2 size={11} /> Edit
+        </button>
+        <button
+          onClick={handleTest}
+          disabled={testState === 'testing'}
+          className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-all hover:bg-white/5"
+          style={{ color: testState === 'ok' ? '#10B981' : testState === 'fail' ? '#F43F5E' : '#A78BFA' }}
+          title={!hasKey && info.needsKey ? 'No API key — edit to add one' : 'Test connection'}
+        >
+          {testState === 'testing' ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+          Test
         </button>
         <button onClick={() => onSetDefault(provider)} className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-all hover:bg-white/5" style={{ color: provider.is_default ? '#F59E0B' : '#64748B' }} title={provider.is_default ? 'Default provider' : 'Set as default'}>
           {provider.is_default ? <Star size={11} /> : <StarOff size={11} />}
@@ -494,6 +559,28 @@ export default function LlmProviderManager({
   const [quickSaving, setQuickSaving] = useState(false);
   const [quickError, setQuickError] = useState<string | null>(null);
   const [quickSuccess, setQuickSuccess] = useState(false);
+  // Dynamic OpenRouter model list
+  const [orModels, setOrModels] = useState<{ id: string; label: string }[] | null>(null);
+  const [orLoading, setOrLoading] = useState(false);
+
+  // Fetch OpenRouter model list when Quick Setup opens
+  useEffect(() => {
+    if (!showQuickSetup || orModels !== null) return;
+    setOrLoading(true);
+    fetch('https://openrouter.ai/api/v1/models')
+      .then(r => r.json())
+      .then((data: { data?: { id: string; name?: string; created?: number }[] }) => {
+        const all = data.data || [];
+        // Filter to major providers, sort by created desc, take top 40
+        const major = all.filter(m =>
+          ['anthropic/', 'openai/', 'google/', 'deepseek/', 'meta-llama/', 'qwen/', 'x-ai/'].some(p => m.id.startsWith(p))
+        );
+        const sorted = major.sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 40);
+        setOrModels(sorted.map(m => ({ id: m.id, label: m.name || m.id })));
+      })
+      .catch(() => setOrModels(null))
+      .finally(() => setOrLoading(false));
+  }, [showQuickSetup, orModels]);
 
   const handleQuickSetup = async () => {
     if (!quickPreset || !quickKey.trim() || !quickModel) {
@@ -621,11 +708,21 @@ export default function LlmProviderManager({
 
               {quickPreset && (
                 <>
-                  {/* Model selector */}
+                  {/* Model selector — dynamic for OpenRouter, static for others */}
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">Model</label>
-                    <div className="grid grid-cols-1 gap-1">
-                      {quickPreset.models.map(m => (
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-slate-500">Model</label>
+                      {quickPreset.id === 'openrouter' && (
+                        <span className="text-xs" style={{ color: orLoading ? '#06B6D4' : orModels ? '#10B981' : '#64748B' }}>
+                          {orLoading ? '⟳ Fetching from OpenRouter…' : orModels ? `${orModels.length} models live` : 'Using cached list'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 gap-1 max-h-56 overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
+                      {(quickPreset.id === 'openrouter' && (orModels || orLoading)
+                        ? (orModels || [])
+                        : quickPreset.models
+                      ).map(m => (
                         <button
                           key={m.id}
                           onClick={() => setQuickModel(m.id)}
@@ -637,10 +734,25 @@ export default function LlmProviderManager({
                           }}
                         >
                           <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: quickModel === m.id ? quickPreset.color : 'rgba(255,255,255,0.15)' }} />
-                          <span className="font-mono">{m.label}</span>
-                          <span className="text-slate-600 ml-auto text-xs" style={{ fontSize: '0.6rem' }}>{m.id}</span>
+                          <span className="font-mono truncate flex-1">{m.label}</span>
+                          <span className="text-slate-600 shrink-0" style={{ fontSize: '0.6rem' }}>{m.id}</span>
                         </button>
                       ))}
+                      {quickPreset.id === 'openrouter' && orLoading && (
+                        <div className="flex items-center gap-2 px-3 py-2 text-xs text-slate-500">
+                          <Loader2 size={11} className="animate-spin" /> Loading latest models from OpenRouter…
+                        </div>
+                      )}
+                    </div>
+                    {/* Custom model ID input */}
+                    <div className="flex items-center gap-2 mt-1">
+                      <input
+                        value={quickModel}
+                        onChange={e => setQuickModel(e.target.value)}
+                        placeholder="Or type a custom model ID…"
+                        className="flex-1 px-2 py-1.5 rounded text-xs font-mono text-slate-300 bg-transparent outline-none"
+                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      />
                     </div>
                   </div>
 
