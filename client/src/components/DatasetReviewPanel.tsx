@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase, Dataset, DatasetSample } from '@/lib/supabase';
 import {
   ChevronLeft, ChevronRight, Download, X, Search,
-  FileCode2, Shield, Filter, Loader2, Eye
+  FileCode2, Shield, Filter, Loader2, Eye, Zap
 } from 'lucide-react';
 
 const PAGE_SIZE = 10;
@@ -14,9 +14,10 @@ const PAGE_SIZE = 10;
 type Props = {
   dataset: Dataset;
   onClose: () => void;
+  onGenerate?: () => void;
 };
 
-export default function DatasetReviewPanel({ dataset, onClose }: Props) {
+export default function DatasetReviewPanel({ dataset, onClose, onGenerate }: Props) {
   const [samples, setSamples] = useState<DatasetSample[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -26,6 +27,9 @@ export default function DatasetReviewPanel({ dataset, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  // Live split counts from actual DB rows (not stale metadata)
+  const [trainCount, setTrainCount] = useState(0);
+  const [evalCount, setEvalCount] = useState(0);
 
   // Debounce search
   useEffect(() => {
@@ -58,6 +62,16 @@ export default function DatasetReviewPanel({ dataset, onClose }: Props) {
       if (error) throw error;
       setSamples(data || []);
       setTotal(count || 0);
+
+      // Also fetch live split counts on first load (all filter, no search)
+      if (split === 'all' && !debouncedSearch) {
+        const [trainRes, evalRes] = await Promise.all([
+          supabase.from('dataset_samples').select('*', { count: 'exact', head: true }).eq('dataset_id', dataset.id).eq('split', 'train'),
+          supabase.from('dataset_samples').select('*', { count: 'exact', head: true }).eq('dataset_id', dataset.id).eq('split', 'eval'),
+        ]);
+        setTrainCount(trainRes.count || 0);
+        setEvalCount(evalRes.count || 0);
+      }
     } catch (err) {
       console.error('Fetch samples error:', err);
     } finally {
@@ -164,7 +178,7 @@ export default function DatasetReviewPanel({ dataset, onClose }: Props) {
                   : { color: '#64748B' }
                 }
               >
-                {s === 'all' ? `All (${dataset.num_train + dataset.num_eval})` : s === 'train' ? `Train (${dataset.num_train})` : `Eval (${dataset.num_eval})`}
+                {s === 'all' ? `All (${trainCount + evalCount})` : s === 'train' ? `Train (${trainCount})` : `Eval (${evalCount})`}
               </button>
             ))}
           </div>
@@ -228,7 +242,33 @@ export default function DatasetReviewPanel({ dataset, onClose }: Props) {
               <Loader2 size={20} className="animate-spin" style={{ color: accentColor }} />
             </div>
           ) : samples.length === 0 ? (
-            <div className="text-center py-12 text-slate-600 text-sm">No samples found.</div>
+            <div className="flex flex-col items-center justify-center py-16 gap-4">
+              {trainCount === 0 && evalCount === 0 && !debouncedSearch ? (
+                <>
+                  <div
+                    className="w-12 h-12 rounded-xl flex items-center justify-center"
+                    style={{ background: `${accentColor}12`, border: `1px solid ${accentColor}30` }}
+                  >
+                    <Zap size={22} style={{ color: accentColor }} />
+                  </div>
+                  <div className="text-center">
+                    <div className="text-sm text-slate-400 font-medium mb-1">No samples generated yet</div>
+                    <div className="text-xs text-slate-600 mb-4">This dataset has not been generated. Run generation to populate samples.</div>
+                    {onGenerate && (
+                      <button
+                        onClick={() => { onClose(); onGenerate(); }}
+                        className="px-4 py-2 text-xs rounded font-semibold transition-all"
+                        style={{ background: accentColor, color: '#070B14' }}
+                      >
+                        Generate Dataset
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="text-slate-600 text-sm">No samples found.</div>
+              )}
+            </div>
           ) : (
             samples.map((s) => (
               <SampleCard
