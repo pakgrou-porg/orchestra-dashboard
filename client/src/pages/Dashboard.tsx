@@ -7,7 +7,7 @@
    ============================================================= */
 import { useEffect, useState } from 'react';
 import { useOrchestra } from '@/hooks/useOrchestra';
-import { Dataset, HardwareProfile, ConductorProfile } from '@/lib/supabase';
+import { Dataset, HardwareProfile, LlmProvider } from '@/lib/supabase';
 import DatasetReviewPanel from '@/components/DatasetReviewPanel';
 import CreateDatasetPanel from '@/components/CreateDatasetPanel';
 import GenerateDatasetPanel from '@/components/GenerateDatasetPanel';
@@ -16,7 +16,7 @@ import LlmProviderManager from '@/components/LlmProviderManager';
 import {
   Database, Cpu, Bot, RefreshCw, Activity, CheckCircle2,
   AlertCircle, BarChart3, FileCode2, Shield, Server, Zap,
-  ChevronRight, GitBranch, Eye, Download, Plus, Play, Edit2, Copy, Settings2, Clock, Layers
+  ChevronRight, GitBranch, Eye, Download, Plus, Play, Edit2, Copy, Settings2, Clock, Layers, BookOpen, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 const HERO_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-hero-bg-jQ87DWT7KT9qkuMrJQAC6d.webp';
@@ -332,10 +332,31 @@ function HardwareCard({ hw, index }: { hw: HardwareProfile; index: number }) {
   );
 }
 
-// ─── Conductor Card ────────────────────────────────────────────
-function ConductorCard({ c, index }: { c: ConductorProfile; index: number }) {
-  const isCloud = c.provider === 'openrouter';
-  const color = isCloud ? '#7C3AED' : '#06B6D4';
+// ─── Provider as Conductor Card ────────────────────────────────
+const PROVIDER_COLORS: Record<string, string> = {
+  openrouter: '#7C3AED',
+  anthropic: '#D97706',
+  openai: '#10B981',
+  gemini: '#3B82F6',
+  venice: '#EC4899',
+  lmstudio_local: '#06B6D4',
+  lmstudio_network: '#06B6D4',
+  custom: '#64748B',
+};
+const PROVIDER_LABELS: Record<string, string> = {
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  gemini: 'Google Gemini',
+  venice: 'Venice.ai',
+  lmstudio_local: 'LMStudio (local)',
+  lmstudio_network: 'LMStudio (network)',
+  custom: 'Custom',
+};
+
+function ConductorCard({ c, index }: { c: LlmProvider; index: number }) {
+  const color = PROVIDER_COLORS[c.provider_type] || '#64748B';
+  const hasKey = !!(c.api_key || c.api_key_hint);
   return (
     <div
       className="glass-card rounded-lg p-4 card-enter"
@@ -348,17 +369,29 @@ function ConductorCard({ c, index }: { c: ConductorProfile; index: number }) {
         >
           <Bot size={15} style={{ color }} />
         </div>
-        <div>
-          <div className="text-sm font-medium text-slate-200" style={{ fontFamily: 'Orbitron, monospace', fontSize: '0.7rem', letterSpacing: '0.05em' }}>
-            {c.name.replace(/_/g, ' ').toUpperCase()}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <div className="text-sm font-medium text-slate-200 truncate" style={{ fontFamily: 'Orbitron, monospace', fontSize: '0.7rem', letterSpacing: '0.05em' }}>
+              {c.display_name || c.name}
+            </div>
+            {c.is_default && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: `${color}22`, color, border: `1px solid ${color}44`, fontFamily: 'monospace' }}>DEFAULT</span>
+            )}
           </div>
-          <div className="text-xs text-slate-500">{c.provider}</div>
+          <div className="text-xs text-slate-500">{PROVIDER_LABELS[c.provider_type] || c.provider_type}</div>
+        </div>
+        <div className="flex items-center gap-1">
+          {c.is_active ? (
+            <span className="badge-active" style={{ fontSize: '9px' }}>ACTIVE</span>
+          ) : (
+            <span className="badge-draft" style={{ fontSize: '9px', color: '#64748B', borderColor: 'rgba(100,116,139,0.4)', background: 'rgba(100,116,139,0.1)' }}>INACTIVE</span>
+          )}
         </div>
       </div>
       <div className="space-y-1.5">
         <div className="flex justify-between text-xs">
           <span className="text-slate-500">Model</span>
-          <span className="metric-value text-slate-300 truncate max-w-[140px]">{c.model_id}</span>
+          <span className="metric-value text-slate-300 truncate max-w-[160px]" title={c.model_id}>{c.model_id}</span>
         </div>
         <div className="flex justify-between text-xs">
           <span className="text-slate-500">Max Tokens</span>
@@ -368,6 +401,19 @@ function ConductorCard({ c, index }: { c: ConductorProfile; index: number }) {
           <span className="text-slate-500">Temperature</span>
           <span className="metric-value text-slate-300">{c.temperature ?? '—'}</span>
         </div>
+        <div className="flex justify-between text-xs">
+          <span className="text-slate-500">API Key</span>
+          <span className="metric-value" style={{ color: hasKey ? '#10B981' : '#EF4444' }}>
+            {hasKey ? (c.api_key ? 'Stored ✓' : 'Hint only') : 'Not set'}
+          </span>
+        </div>
+        {c.capabilities && c.capabilities.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-1">
+            {c.capabilities.map(cap => (
+              <span key={cap} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: '#94A3B8', border: '1px solid rgba(255,255,255,0.08)', fontFamily: 'monospace' }}>{cap}</span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -380,6 +426,7 @@ const NAV_ITEMS = [
   { id: 'hardware', label: 'Hardware', icon: Cpu },
   { id: 'conductors', label: 'Conductors', icon: Bot },
   { id: 'metrics', label: 'Metrics', icon: BarChart3 },
+  { id: 'docs', label: 'Docs', icon: BookOpen },
 ];
 
 function Sidebar({ active, onNav }: { active: string; onNav: (id: string) => void }) {
@@ -444,6 +491,7 @@ function Sidebar({ active, onNav }: { active: string; onNav: (id: string) => voi
 export default function Dashboard() {
   const { datasets, hardware, conductors, llmProviders, loading, error, lastRefresh, refresh } = useOrchestra();
   const [activeSection, setActiveSection] = useState('overview');
+  const [docsExpanded, setDocsExpanded] = useState<Record<string, boolean>>({ readme: true, quickstart: false, architecture: false });
   const [reviewDataset, setReviewDataset] = useState<Dataset | null>(null);
   const [showCreateDataset, setShowCreateDataset] = useState(false);
   const [generateDataset, setGenerateDataset] = useState<Dataset | null>(null);
@@ -707,12 +755,21 @@ export default function Dashboard() {
 
           {/* ── Conductors ── */}
           <section id="section-conductors">
-            <h2 className="section-header text-sm">Conductor Profiles</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="section-header text-sm" style={{ marginBottom: 0 }}>LLM Providers (Conductors)</h2>
+              <span className="text-xs text-slate-500">Managed via LLM Provider Manager</span>
+            </div>
             {loading ? (
               <div className="text-slate-500 text-sm">Loading...</div>
+            ) : llmProviders.filter(p => p.is_active).length === 0 ? (
+              <div className="glass-card rounded-lg p-6 text-center">
+                <Bot size={24} className="mx-auto mb-2 text-slate-600" />
+                <div className="text-sm text-slate-400">No active providers configured.</div>
+                <div className="text-xs text-slate-500 mt-1">Use the LLM Provider Manager to add providers.</div>
+              </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl">
-                {conductors.map((c, i) => <ConductorCard key={c.id} c={c} index={i} />)}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
+                {llmProviders.filter(p => p.is_active).map((c, i) => <ConductorCard key={c.id} c={c} index={i} />)}
               </div>
             )}
           </section>
@@ -762,6 +819,58 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+            </div>
+          </section>
+
+          {/* ── Docs ── */}
+          <section id="section-docs">
+            <h2 className="section-header text-sm">Documentation</h2>
+            <div className="space-y-3">
+              {([
+                {
+                  id: 'readme',
+                  title: 'README — Orchestra SDK',
+                  color: '#06B6D4',
+                  content: `# Orchestra SDK\n\n## Overview\nThe Orchestra SDK is a Python package that implements an autonomous LLM-driven research loop for fine-tuning local models. It orchestrates a Conductor agent that iteratively proposes, tests, and evaluates training hypotheses.\n\n## Architecture\n\`\`\`\nComposer Dashboard (this UI)\n    ↓ defines datasets, registers providers\nConductor (orchestra_sdk)\n    ↓ autonomous loop: propose → edit → commit → run → evaluate → keep/discard\nMusician (Docker/K8s container)\n    ↓ executes train.py, writes metrics to output/results.json\nModel artifacts → workspace/output/ → workspace/best/ (if new best)\n\`\`\`\n\n## Installation\n\`\`\`bash\npip install -e /path/to/orchestra_sdk\n\`\`\`\n\n## Quick Commands\n\`\`\`bash\norchestra init                          # scaffold conductor_config.yaml\norchestra migrate                       # apply Supabase DDL\norchestra dry-run conductor_config.yaml # validate config + connectivity\norchestra run conductor_config.yaml     # start autonomous loop\norchestra status conductor_config.yaml  # show session progress\n\`\`\`\n\n## Key Concepts\n- **Session**: a named research run with a target metric and max iterations\n- **Hypothesis**: an LLM-proposed edit to train.py with a rationale\n- **Keep/Discard**: if metric improves beyond threshold, the edit is committed; otherwise the workspace is reverted\n- **Best model**: whenever a KEEP iteration beats all previous bests, the model artifacts are copied to \`workspace/best/\`\n- **Memory**: semantic search over past iterations using pgvector, so the Conductor avoids repeating failed ideas`,
+                },
+                {
+                  id: 'quickstart',
+                  title: 'Quickstart Guide',
+                  color: '#7C3AED',
+                  content: `# Quickstart\n\n## Prerequisites\n- Python 3.10+\n- Docker (for Musician container)\n- Supabase project with \`orchestra migrate\` applied\n- An LLM provider API key (OpenRouter recommended)\n\n## Step 1 — Install\n\`\`\`bash\ngit clone https://github.com/your-org/orchestra_sdk\ncd orchestra_sdk\npip install -e .\n\`\`\`\n\n## Step 2 — Initialize workspace\n\`\`\`bash\nmkdir -p ~/.orchestra/sessions/memory_scribe_v1\ncd ~/.orchestra/sessions/memory_scribe_v1\norchestra init\n\`\`\`\nThis creates \`conductor_config.yaml\`, \`program.md\`, and \`train.py\`.\n\n## Step 3 — Configure\nEdit \`conductor_config.yaml\`:\n\`\`\`yaml\nsession:\n  name: memory_scribe_v1\n  max_iterations: 20\n  target_metric: eval_loss\n  keep_threshold: -0.005\nllm:\n  provider: openrouter\n  model: qwen/qwen3.5-plus-02-15\n  api_key_env: OPENROUTER_API_KEY\nrunner:\n  type: docker\n  image: orchestra-musician:latest\n\`\`\`\n\n## Step 4 — Apply migrations\n\`\`\`bash\nexport SUPABASE_URL=https://your-project.supabase.co\nexport SUPABASE_SERVICE_KEY=your-service-key\norchestra migrate\n\`\`\`\n\n## Step 5 — Dry run\n\`\`\`bash\nexport OPENROUTER_API_KEY=sk-or-...\norchestra dry-run conductor_config.yaml\n\`\`\`\nExpected output: \`✓ Config valid · ✓ LLM reachable · ✓ Supabase connected · ✓ Git initialized\`\n\n## Step 6 — Run\n\`\`\`bash\norchestra run conductor_config.yaml\n\`\`\`\nThe Conductor will begin iterating. Watch for:\n- \`[KEEP]\` — improvement accepted, baseline updated\n- \`NEW BEST\` — model saved to \`workspace/best/\`\n- \`[DISCARD]\` — no improvement, workspace reverted`,
+                },
+                {
+                  id: 'architecture',
+                  title: 'Architecture & Container Deployment',
+                  color: '#10B981',
+                  content: `# Architecture & Container Deployment\n\n## Workspace Layout\n\`\`\`\n~/.orchestra/sessions/{session_name}/\n├── program.md          # task description for the Conductor\n├── train.py            # the training script being evolved\n├── conductor_config.yaml\n├── output/             # Musician writes artifacts here\n│   ├── results.json    # {metric: float, log: str}\n│   └── model/          # saved model weights\n├── best/               # copy of output/ from best iteration\n│   ├── best_manifest.json\n│   └── model/\n└── .orchestra_fallback/ # local Supabase fallback if offline\n\`\`\`\n\n## Docker Compose (single machine)\n\`\`\`bash\ncd orchestra_sdk/docker\ncp .env.example .env && nano .env  # fill in API keys\ndocker compose up -d\n\`\`\`\nServices: \`conductor\` (runs the loop), \`ollama\` (local LLM), \`pgvector\` (memory).\n\n## K3s Cluster (multi-machine)\n\`\`\`bash\nkubectl apply -f k8s/namespace.yaml\nkubectl apply -f k8s/pvcs.yaml\nkubectl create secret generic orchestra-secrets --from-env-file=.env -n orchestra\nkubectl apply -f k8s/ollama-deployment.yaml\n# Conductor launches Musician Jobs dynamically via K8sRunner\n\`\`\`\n\n## GPU Support\n- NVIDIA: \`nvidia-container-toolkit\` + \`nvidia.com/gpu: 1\` in Job spec\n- AMD ROCm: \`amd.com/gpu: 1\` + \`--device /dev/kfd\`\n\n## Shared Mounts\nThe Musician container mounts the same workspace volume as the Conductor:\n\`\`\`yaml\nvolumeMounts:\n  - name: orchestra-workspace\n    mountPath: /workspace\n\`\`\`\nOn bare metal, this is just \`~/.orchestra/sessions/{name}/\` — no containers needed for testing.`,
+                },
+              ] as { id: string; title: string; color: string; content: string }[]).map(doc => (
+                <div key={doc.id} className="glass-card rounded-lg overflow-hidden">
+                  <button
+                    className="w-full flex items-center justify-between px-5 py-3 text-left"
+                    style={{ borderBottom: docsExpanded[doc.id] ? '1px solid rgba(255,255,255,0.06)' : 'none' }}
+                    onClick={() => setDocsExpanded(prev => ({ ...prev, [doc.id]: !prev[doc.id] }))}
+                  >
+                    <div className="flex items-center gap-2">
+                      <BookOpen size={13} style={{ color: doc.color }} />
+                      <span className="text-sm font-medium" style={{ fontFamily: 'Orbitron, monospace', fontSize: '0.7rem', letterSpacing: '0.05em', color: doc.color }}>
+                        {doc.title.toUpperCase()}
+                      </span>
+                    </div>
+                    {docsExpanded[doc.id]
+                      ? <ChevronUp size={14} className="text-slate-500" />
+                      : <ChevronDown size={14} className="text-slate-500" />}
+                  </button>
+                  {docsExpanded[doc.id] && (
+                    <div className="px-5 py-4">
+                      <pre className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed" style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem' }}>
+                        {doc.content}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </section>
 
