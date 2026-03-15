@@ -242,35 +242,112 @@ function DatasetRow({ ds, index, onReview, onGenerate, onEdit, onClone }: { ds: 
           </div>
         </td>
       </tr>
-      {expanded && (
-        <tr className="border-b border-white/5 bg-white/[0.015]">
-          <td colSpan={7} className="px-4 py-3">
-            <div className="grid grid-cols-2 gap-4 text-xs">
-              <div>
-                <div className="text-slate-500 mb-1">Description</div>
-                <div className="text-slate-300">{ds.description || '—'}</div>
-              </div>
-              <div>
-                <div className="text-slate-500 mb-1">File Paths</div>
-                <div className="metric-value text-slate-400 truncate">{ds.train_path}</div>
-                <div className="metric-value text-slate-400 truncate">{ds.eval_path}</div>
-              </div>
-              <div>
-                <div className="text-slate-500 mb-1">Created</div>
-                <div className="metric-value text-slate-300">
-                  {new Date(ds.created_at).toLocaleString()}
+      {expanded && (() => {
+        const cfg = ds.generation_config as Record<string, unknown> | null;
+        const categories = (cfg?.categories as { label: string; count: number; color?: string }[] | undefined) || [];
+        const totalConfigured = categories.reduce((s, c) => s + c.count, 0);
+        const trainSplit = cfg?.train_split as number | undefined;
+        const evalSplit = cfg?.eval_split as number | undefined;
+        const modelHint = cfg?.model_hint as string | undefined;
+        const hasNoSamples = ds.num_train === 0 && ds.num_eval === 0;
+        return (
+          <tr className="border-b border-white/5 bg-white/[0.015]">
+            <td colSpan={7} className="px-4 py-4">
+              <div className="grid grid-cols-3 gap-5 text-xs">
+                {/* Col 1: Description + meta */}
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-slate-500 mb-1 uppercase tracking-wider" style={{ fontSize: '0.65rem' }}>Description</div>
+                    <div className="text-slate-300 leading-relaxed">{ds.description || '—'}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="text-slate-500 mb-0.5 uppercase tracking-wider" style={{ fontSize: '0.65rem' }}>Created</div>
+                      <div className="metric-value text-slate-400">{new Date(ds.created_at).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500 mb-0.5 uppercase tracking-wider" style={{ fontSize: '0.65rem' }}>Updated</div>
+                      <div className="metric-value text-slate-400">{new Date(ds.updated_at).toLocaleString()}</div>
+                    </div>
+                  </div>
+                  {modelHint && (
+                    <div>
+                      <div className="text-slate-500 mb-0.5 uppercase tracking-wider" style={{ fontSize: '0.65rem' }}>Model Hint</div>
+                      <div className="metric-value text-slate-300">{modelHint}</div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-slate-500 mb-0.5 uppercase tracking-wider" style={{ fontSize: '0.65rem' }}>File Paths</div>
+                    <div className="metric-value text-slate-500 truncate text-[10px]">{ds.train_path}</div>
+                    <div className="metric-value text-slate-500 truncate text-[10px]">{ds.eval_path}</div>
+                  </div>
+                </div>
+
+                {/* Col 2: Category composition */}
+                <div>
+                  <div className="text-slate-500 mb-2 uppercase tracking-wider" style={{ fontSize: '0.65rem' }}>Dataset Composition</div>
+                  {categories.length > 0 ? (
+                    <div className="space-y-2">
+                      {categories.map((cat, ci) => {
+                        const pct = totalConfigured > 0 ? (cat.count / totalConfigured) * 100 : 0;
+                        return (
+                          <div key={ci}>
+                            <div className="flex justify-between mb-0.5">
+                              <span className="text-slate-300">{cat.label}</span>
+                              <span className="metric-value" style={{ color: cat.color || '#06B6D4' }}>{cat.count} samples</span>
+                            </div>
+                            <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: cat.color || '#06B6D4', transition: 'width 0.5s ease' }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="pt-1 border-t border-white/5 flex gap-3 text-slate-500">
+                        <span>Total configured: <span className="metric-value text-slate-300">{totalConfigured}</span></span>
+                        {trainSplit && <span>Train split: <span className="metric-value text-slate-300">{Math.round(trainSplit * 100)}%</span></span>}
+                        {evalSplit && <span>Eval split: <span className="metric-value text-slate-300">{Math.round(evalSplit * 100)}%</span></span>}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-slate-500 italic">No composition configured</div>
+                  )}
+                </div>
+
+                {/* Col 3: Sample status + actions */}
+                <div>
+                  <div className="text-slate-500 mb-2 uppercase tracking-wider" style={{ fontSize: '0.65rem' }}>Sample Status</div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Train samples</span>
+                      <span className="metric-value" style={{ color: ds.num_train > 0 ? '#10B981' : '#F43F5E' }}>{ds.num_train.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Eval samples</span>
+                      <span className="metric-value" style={{ color: ds.num_eval > 0 ? '#10B981' : '#F43F5E' }}>{ds.num_eval.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Status</span>
+                      <span className="metric-value" style={{ color: ds.status === 'active' ? '#10B981' : ds.status === 'draft' ? '#F59E0B' : '#06B6D4' }}>{ds.status.toUpperCase()}</span>
+                    </div>
+                  </div>
+                  {hasNoSamples && (
+                    <div className="mt-3 p-2 rounded" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
+                      <div className="text-[10px] text-amber-400 mb-2">⚠ No samples generated — dataset needs to be populated</div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onGenerate(ds); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs w-full justify-center transition-all"
+                        style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.35)', color: '#10B981' }}
+                      >
+                        <Play size={11} /> Generate Samples
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
-              <div>
-                <div className="text-slate-500 mb-1">Last Updated</div>
-                <div className="metric-value text-slate-300">
-                  {new Date(ds.updated_at).toLocaleString()}
-                </div>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
+            </td>
+          </tr>
+        );
+      })()}
     </>
   );
 }
