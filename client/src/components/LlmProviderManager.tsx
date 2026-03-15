@@ -90,6 +90,8 @@ function ProviderCard({
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   const [testMsg, setTestMsg] = useState('');
 
+  const isLocalNetwork = provider.provider_type === 'lmstudio_network' || provider.provider_type === 'lmstudio_local';
+
   const handleTest = async () => {
     setTestState('testing');
     setTestMsg('');
@@ -98,16 +100,30 @@ function ProviderCard({
       const endpoint = buildChatEndpoint(provider);
       const headers = buildHeaders(provider);
       const t0 = Date.now();
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: provider.model_id,
-          messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
-          max_tokens: 8,
-          temperature: 0,
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(endpoint, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: provider.model_id,
+            messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
+            max_tokens: 8,
+            temperature: 0,
+          }),
+        });
+      } catch (fetchErr: unknown) {
+        // Network/CORS errors throw before we get a Response
+        const msg = fetchErr instanceof Error ? fetchErr.message : '';
+        const isCors = msg.includes('CORS') || msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('network');
+        if (isLocalNetwork && isCors) {
+          throw new Error(
+            `CORS blocked — browser cannot reach ${endpoint}. ` +
+            `Fix: set OLLAMA_ORIGINS="*" (or your site URL) on the Ollama host, then restart Ollama.`
+          );
+        }
+        throw new Error(isCors ? `Network/CORS error: ${msg.slice(0, 80)}` : (msg.slice(0, 120) || 'Fetch failed'));
+      }
       const ms = Date.now() - t0;
       if (!res.ok) {
         const txt = await res.text();
@@ -115,14 +131,15 @@ function ProviderCard({
         throw new Error(preview);
       }
       const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || '(empty)';
+      // Ollama /v1/chat/completions returns choices[]; native /api/generate returns .response
+      const reply = data.choices?.[0]?.message?.content || (data as { response?: string }).response || '(empty)';
       setTestMsg(`${ms}ms — "${reply.trim().slice(0, 40)}"`);
       setTestState('ok');
     } catch (err: unknown) {
-      setTestMsg(err instanceof Error ? err.message.slice(0, 120) : 'Unknown error');
+      setTestMsg(err instanceof Error ? err.message.slice(0, 200) : 'Unknown error');
       setTestState('fail');
     }
-    setTimeout(() => setTestState('idle'), 8000);
+    setTimeout(() => setTestState('idle'), 12000);
   };
 
   const hasKey = !!(provider.api_key && provider.api_key.length > 10);
@@ -163,15 +180,17 @@ function ProviderCard({
             ))}
           </div>
           {testState !== 'idle' && (
-            <div className="mt-2 text-xs px-2 py-1 rounded flex items-center gap-1.5" style={{
+            <div className="mt-2 text-xs px-2 py-1.5 rounded flex items-start gap-1.5" style={{
               background: testState === 'ok' ? 'rgba(16,185,129,0.08)' : testState === 'fail' ? 'rgba(244,63,94,0.08)' : 'rgba(6,182,212,0.08)',
               border: `1px solid ${testState === 'ok' ? 'rgba(16,185,129,0.25)' : testState === 'fail' ? 'rgba(244,63,94,0.25)' : 'rgba(6,182,212,0.25)'}`,
               color: testState === 'ok' ? '#10B981' : testState === 'fail' ? '#F43F5E' : '#06B6D4',
             }}>
-              {testState === 'testing' && <Loader2 size={10} className="animate-spin" />}
-              {testState === 'ok' && <CheckCircle2 size={10} />}
-              {testState === 'fail' && <AlertCircle size={10} />}
-              {testState === 'testing' ? 'Testing connection…' : testMsg}
+              <span className="shrink-0 mt-0.5">
+                {testState === 'testing' && <Loader2 size={10} className="animate-spin" />}
+                {testState === 'ok' && <CheckCircle2 size={10} />}
+                {testState === 'fail' && <AlertCircle size={10} />}
+              </span>
+              <span style={{ wordBreak: 'break-word' }}>{testState === 'testing' ? 'Testing connection…' : testMsg}</span>
             </div>
           )}
         </div>
