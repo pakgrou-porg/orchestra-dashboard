@@ -13,6 +13,7 @@ import CreateDatasetPanel from '@/components/CreateDatasetPanel';
 import GenerateDatasetPanel from '@/components/GenerateDatasetPanel';
 import EditDatasetPanel from '@/components/EditDatasetPanel';
 import LlmProviderManager from '@/components/LlmProviderManager';
+import LlmMetricsPanel from '@/components/LlmMetricsPanel';
 import {
   Database, Cpu, Bot, RefreshCw, Activity, CheckCircle2,
   AlertCircle, BarChart3, FileCode2, Shield, Server, Zap,
@@ -91,47 +92,6 @@ function StatCard({
       </div>
       <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">{label}</div>
       {sub && <div className="text-xs text-slate-600 mt-1 metric-value">{sub}</div>}
-    </div>
-  );
-}
-
-// ─── Error Type Bar ────────────────────────────────────────────
-const SQL_ERROR_TYPES = [
-  { label: 'Syntax', count: 48, color: '#06B6D4' },
-  { label: 'Logic', count: 38, color: '#7C3AED' },
-  { label: 'Type Mismatch', count: 30, color: '#F59E0B' },
-  { label: 'Aggregation', count: 28, color: '#10B981' },
-  { label: 'Join', count: 26, color: '#F43F5E' },
-  { label: 'Missing Clause', count: 20, color: '#94A3B8' },
-  { label: 'Subquery', count: 10, color: '#64748B' },
-];
-const MITRE_TACTICS = [
-  { label: 'Credential Access', count: 24 },
-  { label: 'Persistence', count: 22 },
-  { label: 'Initial Access', count: 20 },
-  { label: 'Execution', count: 19 },
-  { label: 'Reconnaissance', count: 14 },
-  { label: 'Defense Evasion', count: 14 },
-  { label: 'Privilege Escalation', count: 16 },
-  { label: 'Discovery', count: 12 },
-];
-
-function HorizontalBar({ label, count, max, color }: { label: string; count: number; max: number; color?: string }) {
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const t = setTimeout(() => setWidth((count / max) * 100), 100);
-    return () => clearTimeout(t);
-  }, [count, max]);
-  return (
-    <div className="flex items-center gap-3 mb-2">
-      <div className="text-xs text-slate-400 w-28 shrink-0 truncate">{label}</div>
-      <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-700 ease-out"
-          style={{ width: `${width}%`, background: color || '#06B6D4' }}
-        />
-      </div>
-      <div className="metric-value text-xs text-slate-400 w-6 text-right">{count}</div>
     </div>
   );
 }
@@ -780,42 +740,10 @@ export default function Dashboard() {
             )}
           </section>
 
-          {/* ── Metrics Breakdown ── */}
+          {/* ── LLM Usage Metrics ── */}
           <section id="section-metrics">
-            <h2 className="section-header text-sm">Dataset Composition</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* SQL Error Distribution */}
-              <div className="glass-card rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <FileCode2 size={14} style={{ color: '#06B6D4' }} />
-                  <span className="text-sm font-medium text-slate-300">SQL Correction — Error Types</span>
-                </div>
-                {SQL_ERROR_TYPES.map(e => (
-                  <HorizontalBar key={e.label} label={e.label} count={e.count} max={50} color={e.color} />
-                ))}
-                <div className="mt-3 pt-3 border-t border-white/5 flex gap-4 text-xs text-slate-500">
-                  <span><span className="metric-value text-slate-300">170</span> train</span>
-                  <span><span className="metric-value text-slate-300">30</span> eval</span>
-                  <span><span className="metric-value text-slate-300">100%</span> valid</span>
-                </div>
-              </div>
-
-              {/* MITRE Tactic Distribution */}
-              <div className="glass-card rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <Shield size={14} style={{ color: '#7C3AED' }} />
-                  <span className="text-sm font-medium text-slate-300">MITRE TTP/OWASP — Tactic Coverage</span>
-                </div>
-                {MITRE_TACTICS.map(t => (
-                  <HorizontalBar key={t.label} label={t.label} count={t.count} max={30} color="#7C3AED" />
-                ))}
-                <div className="mt-3 pt-3 border-t border-white/5 flex gap-4 text-xs text-slate-500">
-                  <span><span className="metric-value text-slate-300">65</span> unique TTPs</span>
-                  <span><span className="metric-value text-slate-300">14</span> tactics</span>
-                  <span><span className="metric-value text-slate-300">100%</span> valid</span>
-                </div>
-              </div>
-            </div>
+            <h2 className="section-header text-sm">LLM Usage Metrics</h2>
+            <LlmMetricsPanel providers={llmProviders} />
           </section>
 
           {/* ── Hardware ── */}

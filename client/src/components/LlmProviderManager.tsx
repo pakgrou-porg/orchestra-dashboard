@@ -54,6 +54,21 @@ type FormData = {
   max_tokens: string;
   temperature: string;
   capabilities: string[];
+  // Pricing (stored in metadata JSONB)
+  input_cost_per_million: string;   // USD per 1M input tokens
+  output_cost_per_million: string;  // USD per 1M output tokens
+};
+
+// Default pricing per provider type (USD per 1M tokens, 2025 rates)
+const DEFAULT_PRICING_BY_TYPE: Record<string, { input: string; output: string }> = {
+  openrouter:  { input: '0.26',  output: '1.56' },
+  anthropic:   { input: '3.00',  output: '15.00' },
+  openai:      { input: '2.50',  output: '10.00' },
+  gemini:      { input: '0.35',  output: '1.05' },
+  venice:      { input: '0.50',  output: '1.50' },
+  lmstudio_local:   { input: '0', output: '0' },
+  lmstudio_network: { input: '0', output: '0' },
+  custom:      { input: '0', output: '0' },
 };
 
 const DEFAULT_FORM: FormData = {
@@ -67,6 +82,8 @@ const DEFAULT_FORM: FormData = {
   max_tokens: '2048',
   temperature: '0.7',
   capabilities: ['chat'],
+  input_cost_per_million: '0',
+  output_cost_per_million: '0',
 };
 
 function providerTypeInfo(type: string) {
@@ -179,6 +196,26 @@ function ProviderCard({
               <span key={cap} className="text-xs px-1.5 py-0.5 rounded metric-value" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748B' }}>{cap}</span>
             ))}
           </div>
+          {/* Pricing display */}
+          {(() => {
+            const isLocal = provider.provider_type === 'lmstudio_local' || provider.provider_type === 'lmstudio_network';
+            const inputCost = provider.metadata?.input_cost_per_million as number | undefined;
+            const outputCost = provider.metadata?.output_cost_per_million as number | undefined;
+            if (isLocal) return (
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-xs px-1.5 py-0.5 rounded metric-value" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', color: '#10B981' }}>FREE (local)</span>
+                <span className="text-xs text-slate-600">ctx: {provider.context_length.toLocaleString()}</span>
+              </div>
+            );
+            if (inputCost !== undefined || outputCost !== undefined) return (
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                {inputCost !== undefined && <span className="text-xs px-1.5 py-0.5 rounded metric-value" style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', color: '#06B6D4' }}>${inputCost}/1M in</span>}
+                {outputCost !== undefined && <span className="text-xs px-1.5 py-0.5 rounded metric-value" style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', color: '#A78BFA' }}>${outputCost}/1M out</span>}
+                <span className="text-xs text-slate-600">ctx: {provider.context_length.toLocaleString()}</span>
+              </div>
+            );
+            return null;
+          })()}
           {testState !== 'idle' && (
             <div className="mt-2 text-xs px-2 py-1.5 rounded flex items-start gap-1.5" style={{
               background: testState === 'ok' ? 'rgba(16,185,129,0.08)' : testState === 'fail' ? 'rgba(244,63,94,0.08)' : 'rgba(6,182,212,0.08)',
@@ -245,6 +282,8 @@ function ProviderForm({
     max_tokens: initial.max_tokens.toString(),
     temperature: initial.temperature.toString(),
     capabilities: initial.capabilities || ['chat'],
+    input_cost_per_million: String(initial.metadata?.input_cost_per_million ?? DEFAULT_PRICING_BY_TYPE[initial.provider_type]?.input ?? '0'),
+    output_cost_per_million: String(initial.metadata?.output_cost_per_million ?? DEFAULT_PRICING_BY_TYPE[initial.provider_type]?.output ?? '0'),
   } : { ...DEFAULT_FORM });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -268,6 +307,9 @@ function ProviderForm({
     setSaving(true);
     setError(null);
     try {
+      const inputCost = parseFloat(form.input_cost_per_million) || 0;
+      const outputCost = parseFloat(form.output_cost_per_million) || 0;
+      const existingMeta = (initial?.metadata || {}) as Record<string, unknown>;
       const payload: Record<string, unknown> = {
         display_name: form.display_name.trim(),
         provider_type: form.provider_type,
@@ -280,6 +322,11 @@ function ProviderForm({
         temperature: parseFloat(form.temperature) || 0.7,
         capabilities: form.capabilities,
         name: `${form.provider_type}_${form.model_id.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${Date.now()}`,
+        metadata: {
+          ...existingMeta,
+          input_cost_per_million: inputCost,
+          output_cost_per_million: outputCost,
+        },
       };
       // Store actual API key if provided (never blank out an existing key on edit)
       if (form.api_key.trim()) {
@@ -328,6 +375,11 @@ function ProviderForm({
                   set('provider_type', pt.value);
                   if (pt.defaultPort) set('port', pt.defaultPort.toString());
                   set('base_url', pt.urlPlaceholder);
+                  // Auto-populate pricing defaults for this provider type
+                  const pricing = DEFAULT_PRICING_BY_TYPE[pt.value];
+                  if (pricing) {
+                    setForm(f => ({ ...f, provider_type: pt.value, input_cost_per_million: pricing.input, output_cost_per_million: pricing.output }));
+                  }
                 }}
                 className="flex items-center gap-2 px-3 py-2 rounded text-xs text-left transition-all"
                 style={{
@@ -441,6 +493,42 @@ function ProviderForm({
               />
             </div>
           ))}
+        </div>
+
+        {/* Pricing */}
+        <div>
+          <label className="block text-xs text-slate-500 mb-1.5 metric-value uppercase tracking-wider">
+            Pricing <span className="normal-case text-slate-600">(USD per 1M tokens — used for cost estimation)</span>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1 metric-value">Input $/1M tokens</label>
+              <input
+                value={form.input_cost_per_million}
+                onChange={e => set('input_cost_per_million', e.target.value)}
+                placeholder="0.26"
+                type="number"
+                step="0.01"
+                min="0"
+                className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1 metric-value">Output $/1M tokens</label>
+              <input
+                value={form.output_cost_per_million}
+                onChange={e => set('output_cost_per_million', e.target.value)}
+                placeholder="1.56"
+                type="number"
+                step="0.01"
+                min="0"
+                className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-slate-600 mt-1">Local providers (LMStudio) default to $0. OpenRouter rates auto-filled per type.</p>
         </div>
 
         {/* Capabilities */}

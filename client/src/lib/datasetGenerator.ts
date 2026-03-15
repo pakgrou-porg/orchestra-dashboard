@@ -39,6 +39,9 @@ interface GenerationConfig {
   system_prompt_template?: string;
   generation_notes?: string;
   model_hint?: string;
+  train_split?: number;  // 0.0–1.0, default 0.8
+  num_train?: number;
+  num_eval?: number;
 }
 
 // ── Prompt builders ──────────────────────────────────────────────
@@ -118,8 +121,17 @@ export async function generateDataset(
   const cfg = (dataset.generation_config || {}) as GenerationConfig;
   const categories: Category[] = cfg.categories || [];
   const systemPrompt = buildSystemPrompt(cfg);
-  const totalTrain = dataset.num_train || 0;
-  const totalEval = dataset.num_eval || 0;
+
+  // Derive total sample counts from generation_config when dataset metadata is 0
+  // Priority: dataset.num_train/num_eval → cfg.num_train/num_eval → computed from categories (80/20 split)
+  let totalTrain = dataset.num_train || cfg.num_train || 0;
+  let totalEval = dataset.num_eval || cfg.num_eval || 0;
+  if (totalTrain === 0 && totalEval === 0 && categories.length > 0) {
+    const totalFromCats = categories.reduce((sum, c) => sum + (c.count || 0), 0);
+    const trainSplit = cfg.train_split ?? 0.8;
+    totalTrain = Math.round(totalFromCats * trainSplit);
+    totalEval = totalFromCats - totalTrain;
+  }
   const totalSamples = totalTrain + totalEval;
 
   const emit = (phase: GenerationProgress['phase'], label: string, log: string, completed = 0) => {
@@ -347,11 +359,13 @@ export async function generateDataset(
     await sleep(100);
   }
 
-  // Update dataset status → active and record generation metadata
+  // Update dataset status → active and write actual sample counts back to datasets table
   const { error: updateErr } = await supabase
     .from('datasets')
     .update({
       status: 'active',
+      num_train: trainSamples.length,
+      num_eval: evalSamples.length,
       updated_at: new Date().toISOString(),
     })
     .eq('id', dataset.id);

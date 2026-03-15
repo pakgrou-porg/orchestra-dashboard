@@ -62,7 +62,14 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
   const [currentPhase, setCurrentPhase] = useState<PhaseId | null>(null);
   const [completedPhases, setCompletedPhases] = useState<Set<PhaseId>>(new Set());
   const [completedSamples, setCompletedSamples] = useState(0);
-  const totalSamples = (dataset.num_train || 0) + (dataset.num_eval || 0);
+  // Compute totalSamples from generation_config.categories when num_train/num_eval are 0
+  const _genCfg = (dataset.generation_config || {}) as Record<string, unknown>;
+  const _cats = (_genCfg.categories as { count: number }[] | undefined) || [];
+  const _catTotal = _cats.reduce((s, c) => s + (c.count || 0), 0);
+  const _trainSplit = (_genCfg.train_split as number | undefined) ?? 0.8;
+  const _computedTrain = _catTotal > 0 ? Math.round(_catTotal * _trainSplit) : 0;
+  const _computedEval = _catTotal > 0 ? _catTotal - _computedTrain : 0;
+  const totalSamples = (dataset.num_train || _computedTrain) + (dataset.num_eval || _computedEval);
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -157,7 +164,7 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
 
       addLog('🎉 Generation complete — dataset is now ACTIVE');
       setStage('done');
-      setTimeout(() => onGenerated(), 2000);
+      onGenerated(); // refresh registry counts without closing panel
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       addLog(`❌ Generation failed: ${msg}`);
@@ -238,7 +245,16 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
               <div className="text-xs text-slate-500 font-mono">{dataset.name}</div>
             </div>
           </div>
-          {stage !== 'running' && (
+          {stage === 'running' ? (
+            <button
+              onClick={handleAbort}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors"
+              style={{ background: 'rgba(244,63,94,0.12)', border: '1px solid rgba(244,63,94,0.35)', color: '#F43F5E' }}
+              title="Cancel generation (in-flight requests will complete)"
+            >
+              <StopCircle size={12} /> Cancel
+            </button>
+          ) : (
             <button
               onClick={onClose}
               className="w-7 h-7 rounded flex items-center justify-center text-slate-500 hover:text-slate-300 transition-colors"
@@ -264,8 +280,8 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
               {[
                 ['Task Type', dataset.task_type],
                 ['Metric', dataset.metric_type],
-                ['Train Samples', String(dataset.num_train)],
-                ['Eval Samples', String(dataset.num_eval)],
+                ['Train Samples', String(dataset.num_train || _computedTrain)],
+                ['Eval Samples', String(dataset.num_eval || _computedEval)],
                 ['Format', dataset.format || 'jsonl'],
                 ['Model Hint', modelHint || '—'],
               ].map(([k, v]) => (
@@ -586,7 +602,7 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
           {stage === 'done' && (
             <>
               <div className="flex items-center gap-2 text-xs" style={{ color: '#10B981' }}>
-                <CheckCircle2 size={13} /> {totalSamples} samples generated · Dataset ACTIVE
+                <CheckCircle2 size={13} /> {completedSamples || totalSamples} samples generated · Dataset ACTIVE
               </div>
               <button
                 onClick={onClose}
