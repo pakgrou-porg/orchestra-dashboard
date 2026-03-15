@@ -5,7 +5,7 @@
    - Top header bar with live clock + connection status
    - 4-column stat cards → datasets table → hardware + conductors
    ============================================================= */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useOrchestra } from '@/hooks/useOrchestra';
 import { Dataset, HardwareProfile, LlmProvider } from '@/lib/supabase';
 import DatasetReviewPanel from '@/components/DatasetReviewPanel';
@@ -14,9 +14,10 @@ import GenerateDatasetPanel from '@/components/GenerateDatasetPanel';
 import EditDatasetPanel from '@/components/EditDatasetPanel';
 import LlmProviderManager from '@/components/LlmProviderManager';
 import LlmMetricsPanel from '@/components/LlmMetricsPanel';
+import { generationStore } from '@/lib/generationStore';
 import {
   Database, Cpu, Bot, RefreshCw, Activity, CheckCircle2,
-  AlertCircle, BarChart3, FileCode2, Shield, Server, Zap,
+  AlertCircle, BarChart3, FileCode2, Shield, Server, Zap, Loader2,
   ChevronRight, GitBranch, Eye, Download, Plus, Play, Edit2, Copy, Settings2, Clock, Layers, BookOpen, ChevronDown, ChevronUp
 } from 'lucide-react';
 
@@ -535,6 +536,14 @@ export default function Dashboard() {
   const [editDataset, setEditDataset] = useState<Dataset | null>(null);
   const [showProviderManager, setShowProviderManager] = useState(false);
 
+  // Subscribe to background generation store for the status indicator
+  const genState = useSyncExternalStore(
+    generationStore.subscribe.bind(generationStore),
+    generationStore.getState.bind(generationStore),
+  );
+  const bgRunning = genState.stage === 'running';
+  const bgDone = genState.stage === 'done';
+
   const handleCloneDataset = async (ds: Dataset) => {
     const { supabase } = await import('@/lib/supabase');
     // Find a unique copy name
@@ -583,7 +592,7 @@ export default function Dashboard() {
         <GenerateDatasetPanel
           dataset={generateDataset}
           onClose={() => setGenerateDataset(null)}
-          onGenerated={() => { setGenerateDataset(null); refresh(); }}
+          onGenerated={() => { refresh(); }}
         />
       )}
       {editDataset && (
@@ -630,6 +639,27 @@ export default function Dashboard() {
               <span className="text-xs text-slate-600 metric-value">
                 Refreshed {lastRefresh.toLocaleTimeString()}
               </span>
+            )}
+            {/* Background generation status indicator */}
+            {(bgRunning || bgDone) && (
+              <button
+                onClick={() => {
+                  // Re-open the panel for the dataset that's running/done
+                  const ds = datasets.find(d => d.id === genState.datasetId);
+                  if (ds) setGenerateDataset(ds);
+                }}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded transition-all"
+                style={{
+                  background: bgDone ? 'rgba(16,185,129,0.08)' : 'rgba(6,182,212,0.08)',
+                  border: `1px solid ${bgDone ? 'rgba(16,185,129,0.3)' : 'rgba(6,182,212,0.3)'}`,
+                  color: bgDone ? '#10B981' : '#06B6D4',
+                }}
+                title={bgRunning ? `Generating ${genState.datasetName} — click to view` : `${genState.datasetName} complete — click to view`}
+              >
+                {bgRunning
+                  ? <><Loader2 size={11} className="animate-spin" /> {genState.completedSamples}/{genState.totalSamples} samples</>
+                  : <><CheckCircle2 size={11} /> {genState.datasetName} done</>}
+              </button>
             )}
             <button
               onClick={() => setShowProviderManager(true)}

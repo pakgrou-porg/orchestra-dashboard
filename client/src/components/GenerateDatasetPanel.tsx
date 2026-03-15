@@ -5,18 +5,19 @@
    Workflow:
    1. Shows dataset config summary (read-only)
    2. User selects provider + concurrency
-   3. On "Generate" → calls real LLM generation engine
+   3. On "Generate" → calls real LLM generation engine via generationStore
    4. Shows live progress: phase steps + streaming log
-   5. On completion → dataset status → active in Supabase
+   5. Panel can be CLOSED at any time without cancelling the job
+   6. Re-opening the panel shows live progress if job is still running
    ============================================================= */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   X, Play, Loader2, CheckCircle2, AlertCircle,
   Terminal, Zap, Database, FileText,
-  ChevronRight, Clock, RefreshCw, Server, StopCircle
+  ChevronRight, Clock, RefreshCw, Server, StopCircle, Minimize2
 } from 'lucide-react';
 import { supabase, Dataset, LlmProvider } from '@/lib/supabase';
-import { generateDataset, GenerationProgress } from '@/lib/datasetGenerator';
+import { generationStore } from '@/lib/generationStore';
 
 interface Props {
   dataset: Dataset;
@@ -52,16 +53,28 @@ const PROVIDER_TYPE_LABELS: Record<string, string> = {
 
 export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: Props) {
   const accentColor = '#06B6D4';
+
+  // Subscribe to background generation store
+  const genState = useSyncExternalStore(
+    generationStore.subscribe.bind(generationStore),
+    generationStore.getState.bind(generationStore),
+  );
+
+  // Determine if the store is running a job for THIS dataset
+  const isThisDataset = genState.datasetId === dataset.id;
+  const storeRunning = genState.stage === 'running' && isThisDataset;
+  const storeDone    = genState.stage === 'done'    && isThisDataset;
+  const storeError   = genState.stage === 'error'   && isThisDataset;
+
+  // Local UI state (config stage only)
   const [providers, setProviders] = useState<LlmProvider[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [concurrency, setConcurrency] = useState(4);
   const [loadingProviders, setLoadingProviders] = useState(true);
-  const [stage, setStage] = useState<'config' | 'running' | 'done' | 'error'>('config');
 
-  // Phase tracking
-  const [currentPhase, setCurrentPhase] = useState<PhaseId | null>(null);
-  const [completedPhases, setCompletedPhases] = useState<Set<PhaseId>>(new Set());
-  const [completedSamples, setCompletedSamples] = useState(0);
+  // If store is running/done/error for this dataset, skip config stage
+  const showProgress = storeRunning || storeDone || storeError;
+
   // Compute totalSamples from generation_config.categories when num_train/num_eval are 0
   const _genCfg = (dataset.generation_config || {}) as Record<string, unknown>;
   const _cats = (_genCfg.categories as { count: number }[] | undefined) || [];
@@ -71,32 +84,14 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
   const _computedEval = _catTotal > 0 ? _catTotal - _computedTrain : 0;
   const totalSamples = (dataset.num_train || _computedTrain) + (dataset.num_eval || _computedEval);
 
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [logLines, setLogLines] = useState<string[]>([]);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
-  const addLog = (line: string) => {
-    const ts = new Date().toISOString().slice(11, 23);
-    setLogLines(prev => [...prev.slice(-120), `[${ts}] ${line}`]);
-  };
-
+  // Auto-scroll log
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [logLines]);
-
-  useEffect(() => {
-    if (stage === 'running') {
-      timerRef.current = setInterval(() => setElapsedMs(e => e + 250), 250);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [stage]);
+  }, [genState.logLines]);
 
   const formatElapsed = (ms: number) => {
     const s = Math.floor(ms / 1000);
@@ -104,80 +99,18 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
     return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
   };
 
-  const runGeneration = async () => {
+  const handleStart = () => {
     const provider = providers.find(p => p.id === selectedProviderId);
-    if (!provider) {
-      setErrorMsg('No provider selected.');
-      return;
-    }
-
-    setStage('running');
-    setCurrentPhase(null);
-    setCompletedPhases(new Set());
-    setCompletedSamples(0);
-    setElapsedMs(0);
-    setLogLines([]);
-    setErrorMsg(null);
-
-    const abort = new AbortController();
-    abortRef.current = abort;
-
-    // Update status to 'generating'
-    await supabase.from('datasets').update({ status: 'generating' }).eq('id', dataset.id);
-    addLog(`Dataset "${dataset.name}" status → generating`);
-    addLog(`Provider: ${provider.display_name} (${provider.model_id})`);
-    addLog(`Concurrency: ${concurrency} parallel requests`);
-
-    try {
-      await generateDataset(
-        dataset,
-        provider,
-        concurrency,
-        (progress: GenerationProgress) => {
-          addLog(progress.log);
-          setCompletedSamples(progress.completed);
-
-          if (progress.phase === 'done') {
-            setCurrentPhase('done');
-            setCompletedPhases(prev => {
-              const next = new Set(prev);
-              PHASE_ORDER.forEach(p => next.add(p));
-              return next;
-            });
-          } else if (progress.phase === 'error') {
-            // handled in catch
-          } else {
-            const phaseIdx = PHASE_ORDER.indexOf(progress.phase);
-            // Mark all previous phases as completed
-            setCompletedPhases(prev => {
-              const next = new Set(prev);
-              for (let i = 0; i < phaseIdx; i++) {
-                next.add(PHASE_ORDER[i]);
-              }
-              return next;
-            });
-            setCurrentPhase(progress.phase);
-          }
-        },
-        abort.signal,
-      );
-
-      addLog('🎉 Generation complete — dataset is now ACTIVE');
-      setStage('done');
-      onGenerated(); // refresh registry counts without closing panel
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      addLog(`❌ Generation failed: ${msg}`);
-      setErrorMsg(msg);
-      setStage('error');
-      // Revert status to draft on failure
-      await supabase.from('datasets').update({ status: 'draft' }).eq('id', dataset.id);
-    }
+    if (!provider) return;
+    generationStore.start(dataset, provider, concurrency, totalSamples, onGenerated);
   };
 
   const handleAbort = () => {
-    abortRef.current?.abort();
-    addLog('⚠ Cancellation requested — waiting for in-flight requests to complete…');
+    generationStore.abort();
+  };
+
+  const handleReset = () => {
+    generationStore.reset();
   };
 
   // Load active providers from Supabase (prefer those with real api_key)
@@ -190,7 +123,6 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
       .then(({ data }) => {
         const list = (data || []) as LlmProvider[];
         setProviders(list);
-        // Prefer providers with a real api_key, then default, then first
         const withKey = list.filter(p => p.api_key && p.api_key.length > 10);
         const preferred = withKey.find(p => p.is_default) || withKey[0] || list.find(p => p.is_default) || list[0];
         if (preferred) setSelectedProviderId(preferred.id);
@@ -205,15 +137,15 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
   const modelHint = (generationConfig.model_hint as string) || '';
   const hasKey = !!(selectedProvider?.api_key && selectedProvider.api_key.length > 10);
   const isLocalProvider = selectedProvider?.provider_type === 'lmstudio_local' || selectedProvider?.provider_type === 'lmstudio_network';
-  const canGenerate = !!selectedProvider && (hasKey || isLocalProvider);
+  const canGenerate = !!selectedProvider && (hasKey || isLocalProvider) && generationStore.canStart();
 
-  const progressPct = totalSamples > 0 ? Math.round((completedSamples / totalSamples) * 100) : 0;
+  const progressPct = showProgress ? genState.progressPct : 0;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-end"
       style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)' }}
-      onClick={(e) => { if (e.target === e.currentTarget && stage !== 'running') onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
         className="h-full w-full max-w-2xl flex flex-col overflow-hidden"
@@ -233,7 +165,7 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
               className="w-8 h-8 rounded flex items-center justify-center"
               style={{ background: `${accentColor}18`, border: `1px solid ${accentColor}33` }}
             >
-              <Play size={15} style={{ color: accentColor }} />
+              {storeRunning ? <Loader2 size={15} className="animate-spin" style={{ color: accentColor }} /> : <Play size={15} style={{ color: accentColor }} />}
             </div>
             <div>
               <div
@@ -245,25 +177,52 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
               <div className="text-xs text-slate-500 font-mono">{dataset.name}</div>
             </div>
           </div>
-          {stage === 'running' ? (
-            <button
-              onClick={handleAbort}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors"
-              style={{ background: 'rgba(244,63,94,0.12)', border: '1px solid rgba(244,63,94,0.35)', color: '#F43F5E' }}
-              title="Cancel generation (in-flight requests will complete)"
-            >
-              <StopCircle size={12} /> Cancel
-            </button>
-          ) : (
-            <button
-              onClick={onClose}
-              className="w-7 h-7 rounded flex items-center justify-center text-slate-500 hover:text-slate-300 transition-colors"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-            >
-              <X size={14} />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {storeRunning && (
+              <button
+                onClick={handleAbort}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors"
+                style={{ background: 'rgba(244,63,94,0.12)', border: '1px solid rgba(244,63,94,0.35)', color: '#F43F5E' }}
+                title="Cancel generation (in-flight requests will complete)"
+              >
+                <StopCircle size={12} /> Cancel
+              </button>
+            )}
+            {storeRunning ? (
+              /* Close WITHOUT cancelling — job continues in background */
+              <button
+                onClick={onClose}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors"
+                style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)', color: '#06B6D4' }}
+                title="Close panel — generation continues in the background"
+              >
+                <Minimize2 size={12} /> Minimize
+              </button>
+            ) : (
+              <button
+                onClick={onClose}
+                className="w-7 h-7 rounded flex items-center justify-center text-slate-500 hover:text-slate-300 transition-colors"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Background-running banner (when store is running a DIFFERENT dataset) */}
+        {genState.stage === 'running' && !isThisDataset && (
+          <div
+            className="px-6 py-2 flex items-center gap-2 text-xs shrink-0"
+            style={{ background: 'rgba(245,158,11,0.07)', borderBottom: '1px solid rgba(245,158,11,0.2)', color: '#F59E0B' }}
+          >
+            <Loader2 size={11} className="animate-spin" />
+            <span>
+              <strong>{genState.datasetName}</strong> is generating in the background ({genState.completedSamples}/{genState.totalSamples} samples).
+              You cannot start a new job until it completes.
+            </span>
+          </div>
+        )}
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
@@ -329,7 +288,7 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
           </div>
 
           {/* Config stage: provider + concurrency */}
-          {stage === 'config' && (
+          {!showProgress && (
             <div className="space-y-4">
               {/* Provider selector */}
               <div>
@@ -385,7 +344,7 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
                   </div>
                 )}
 
-                {selectedProvider && !canGenerate && (
+                {selectedProvider && !canGenerate && generationStore.canStart() && (
                   <div className="mt-2 flex items-start gap-2 p-2.5 rounded text-xs" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)', color: '#F59E0B' }}>
                     <AlertCircle size={11} className="mt-0.5 shrink-0" />
                     This provider has no API key stored. Edit it in the LLM Provider Manager to add the key before generating.
@@ -435,29 +394,29 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
           )}
 
           {/* Progress (running / done / error) */}
-          {(stage === 'running' || stage === 'done' || stage === 'error') && (
+          {showProgress && (
             <div className="space-y-4">
               {/* Timer + status + progress bar */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    {stage === 'running' && <Loader2 size={13} className="animate-spin" style={{ color: accentColor }} />}
-                    {stage === 'done' && <CheckCircle2 size={13} style={{ color: '#10B981' }} />}
-                    {stage === 'error' && <AlertCircle size={13} className="text-red-400" />}
-                    <span className="text-xs font-mono" style={{ color: stage === 'done' ? '#10B981' : stage === 'error' ? '#F43F5E' : accentColor }}>
-                      {stage === 'running' ? 'GENERATING…' : stage === 'done' ? 'COMPLETE' : 'FAILED'}
+                    {storeRunning && <Loader2 size={13} className="animate-spin" style={{ color: accentColor }} />}
+                    {storeDone && <CheckCircle2 size={13} style={{ color: '#10B981' }} />}
+                    {storeError && <AlertCircle size={13} className="text-red-400" />}
+                    <span className="text-xs font-mono" style={{ color: storeDone ? '#10B981' : storeError ? '#F43F5E' : accentColor }}>
+                      {storeRunning ? 'GENERATING…' : storeDone ? 'COMPLETE' : 'FAILED'}
                     </span>
-                    {stage === 'running' && (
-                      <span className="text-xs text-slate-500 font-mono">{completedSamples}/{totalSamples} samples</span>
+                    {storeRunning && (
+                      <span className="text-xs text-slate-500 font-mono">{genState.completedSamples}/{genState.totalSamples} samples</span>
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono">
-                    <Clock size={11} /> {formatElapsed(elapsedMs)}
+                    <Clock size={11} /> {formatElapsed(genState.elapsedMs)}
                   </div>
                 </div>
 
                 {/* Progress bar */}
-                {stage === 'running' && totalSamples > 0 && (
+                {storeRunning && genState.totalSamples > 0 && (
                   <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
                     <div
                       className="h-full rounded-full transition-all duration-500"
@@ -472,8 +431,8 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
                 {PHASE_ORDER.filter(p => p !== 'done').map((phaseId) => {
                   const meta = PHASE_META[phaseId];
                   const PIcon = meta.icon;
-                  const isDone = completedPhases.has(phaseId);
-                  const isActive = currentPhase === phaseId && stage === 'running';
+                  const isDone = genState.completedPhases.has(phaseId);
+                  const isActive = genState.currentPhase === phaseId && storeRunning;
                   return (
                     <div
                       key={phaseId}
@@ -512,8 +471,8 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
                 <div className="flex items-center gap-2 mb-1.5">
                   <Terminal size={11} className="text-slate-600" />
                   <span className="text-xs text-slate-600">Generation Log</span>
-                  {stage === 'running' && (
-                    <span className="text-xs text-slate-600 ml-auto font-mono">{logLines.length} lines</span>
+                  {storeRunning && (
+                    <span className="text-xs text-slate-600 ml-auto font-mono">{genState.logLines.length} lines</span>
                   )}
                 </div>
                 <div
@@ -528,7 +487,7 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
                     lineHeight: '1.6',
                   }}
                 >
-                  {logLines.map((line, i) => (
+                  {genState.logLines.map((line, i) => (
                     <div
                       key={i}
                       style={{
@@ -542,18 +501,18 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
                       {line}
                     </div>
                   ))}
-                  {stage === 'running' && (
+                  {storeRunning && (
                     <div style={{ color: accentColor }} className="animate-pulse">▋</div>
                   )}
                 </div>
               </div>
 
-              {errorMsg && (
+              {genState.errorMsg && (
                 <div
                   className="flex items-start gap-2 p-3 rounded text-xs"
                   style={{ background: 'rgba(244,63,94,0.07)', border: '1px solid rgba(244,63,94,0.2)', color: '#F43F5E' }}
                 >
-                  <AlertCircle size={12} className="mt-0.5 shrink-0" /> {errorMsg}
+                  <AlertCircle size={12} className="mt-0.5 shrink-0" /> {genState.errorMsg}
                 </div>
               )}
             </div>
@@ -565,7 +524,8 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
           className="px-6 py-4 flex items-center justify-between shrink-0"
           style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
         >
-          {stage === 'config' && (
+          {/* Config stage footer */}
+          {!showProgress && (
             <>
               <button
                 onClick={onClose}
@@ -575,7 +535,7 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
                 Cancel
               </button>
               <button
-                onClick={runGeneration}
+                onClick={handleStart}
                 disabled={!canGenerate || loadingProviders}
                 className="flex items-center gap-2 px-6 py-2 rounded text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ background: canGenerate ? accentColor : 'rgba(255,255,255,0.06)', color: canGenerate ? '#070B14' : '#64748B' }}
@@ -584,28 +544,42 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
               </button>
             </>
           )}
-          {stage === 'running' && (
+
+          {/* Running footer */}
+          {storeRunning && (
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-2 text-xs text-slate-500">
                 <Loader2 size={12} className="animate-spin" style={{ color: accentColor }} />
-                {completedSamples}/{totalSamples} samples · {progressPct}% complete
+                {genState.completedSamples}/{genState.totalSamples} samples · {progressPct}% complete
               </div>
-              <button
-                onClick={handleAbort}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-all hover:bg-white/5"
-                style={{ color: '#F43F5E', border: '1px solid rgba(244,63,94,0.2)' }}
-              >
-                <StopCircle size={12} /> Cancel
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-all"
+                  style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)', color: '#06B6D4' }}
+                  title="Close panel without stopping generation"
+                >
+                  <Minimize2 size={12} /> Close (keep running)
+                </button>
+                <button
+                  onClick={handleAbort}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-all hover:bg-white/5"
+                  style={{ color: '#F43F5E', border: '1px solid rgba(244,63,94,0.2)' }}
+                >
+                  <StopCircle size={12} /> Cancel Job
+                </button>
+              </div>
             </div>
           )}
-          {stage === 'done' && (
+
+          {/* Done footer */}
+          {storeDone && (
             <>
               <div className="flex items-center gap-2 text-xs" style={{ color: '#10B981' }}>
-                <CheckCircle2 size={13} /> {completedSamples || totalSamples} samples generated · Dataset ACTIVE
+                <CheckCircle2 size={13} /> {genState.completedSamples || genState.totalSamples} samples generated · Dataset ACTIVE
               </div>
               <button
-                onClick={onClose}
+                onClick={() => { handleReset(); onClose(); }}
                 className="flex items-center gap-2 px-5 py-2 rounded text-sm font-medium transition-all"
                 style={{ background: '#10B981', color: '#070B14' }}
               >
@@ -613,16 +587,18 @@ export default function GenerateDatasetPanel({ dataset, onClose, onGenerated }: 
               </button>
             </>
           )}
-          {stage === 'error' && (
+
+          {/* Error footer */}
+          {storeError && (
             <>
               <button
-                onClick={() => { setStage('config'); setCompletedPhases(new Set()); setCurrentPhase(null); }}
+                onClick={handleReset}
                 className="flex items-center gap-2 px-4 py-2 rounded text-sm transition-all"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#94A3B8' }}
               >
                 <RefreshCw size={13} /> Retry
               </button>
-              <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-400">
+              <button onClick={() => { handleReset(); onClose(); }} className="text-xs text-slate-500 hover:text-slate-400">
                 Close
               </button>
             </>

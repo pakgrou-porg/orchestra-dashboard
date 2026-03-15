@@ -90,6 +90,81 @@ function providerTypeInfo(type: string) {
   return PROVIDER_TYPES.find(p => p.value === type) || PROVIDER_TYPES[0];
 }
 
+// ─── Known max context lengths per model (tokens) ─────────────
+// Sources: OpenRouter model catalog, Anthropic docs, OpenAI docs, Google AI docs (Mar 2025)
+const MODEL_MAX_CONTEXT: Record<string, number> = {
+  // Anthropic
+  'claude-3-7-sonnet-20250219': 200000,
+  'claude-3-5-sonnet-20241022': 200000,
+  'claude-3-5-haiku-20241022': 200000,
+  'claude-3-opus-20240229': 200000,
+  'claude-3-haiku-20240307': 200000,
+  // OpenAI
+  'gpt-4o': 128000,
+  'gpt-4o-mini': 128000,
+  'o1': 200000,
+  'o3-mini': 200000,
+  'gpt-4-turbo': 128000,
+  'gpt-3.5-turbo': 16385,
+  // Google Gemini
+  'gemini-2.5-pro-preview-03-25': 1048576,
+  'gemini-2.0-flash': 1048576,
+  'gemini-2.0-flash-001': 1048576,
+  'gemini-2.0-pro-exp-02-05': 1048576,
+  'gemini-1.5-pro': 2097152,
+  'gemini-1.5-flash': 1048576,
+  // OpenRouter (provider/model format)
+  'anthropic/claude-3.7-sonnet': 200000,
+  'anthropic/claude-3.5-sonnet': 200000,
+  'anthropic/claude-3.5-haiku': 200000,
+  'anthropic/claude-3-opus': 200000,
+  'openai/gpt-4o': 128000,
+  'openai/gpt-4o-mini': 128000,
+  'openai/o1': 200000,
+  'openai/o3-mini': 200000,
+  'google/gemini-2.0-flash-001': 1048576,
+  'google/gemini-2.5-pro-preview-03-25': 1048576,
+  'google/gemini-2.0-pro-exp-02-05': 1048576,
+  'deepseek/deepseek-chat-v3-0324': 65536,
+  'deepseek/deepseek-r1': 65536,
+  'meta-llama/llama-3.3-70b-instruct': 131072,
+  'meta-llama/llama-3.1-405b-instruct': 131072,
+  'meta-llama/llama-3.1-70b-instruct': 131072,
+  'meta-llama/llama-3.1-8b-instruct': 131072,
+  'qwen/qwen-2.5-72b-instruct': 131072,
+  'qwen/qwen-2.5-7b-instruct': 131072,
+  'mistralai/mistral-large': 131072,
+  'mistralai/mistral-7b-instruct': 32768,
+  // Venice
+  'llama-3.3-70b': 131072,
+  'deepseek-r1-671b': 65536,
+  'mistral-31-24b': 131072,
+  'qwen-2.5-vl-72b': 131072,
+  // LMStudio common local models
+  'llama-3.2-3b-instruct': 131072,
+  'qwen2.5-7b-instruct': 131072,
+  'phi-4-mini': 16384,
+  'phi-3-mini': 128000,
+};
+
+function getMaxContext(modelId: string): number | null {
+  if (!modelId) return null;
+  const exact = MODEL_MAX_CONTEXT[modelId];
+  if (exact) return exact;
+  // Fuzzy: check if any known key is a substring of the model id or vice versa
+  const lower = modelId.toLowerCase();
+  for (const [key, val] of Object.entries(MODEL_MAX_CONTEXT)) {
+    if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) return val;
+  }
+  return null;
+}
+
+function formatCtx(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
 function ProviderCard({
   provider,
   onEdit,
@@ -477,22 +552,80 @@ function ProviderForm({
 
         {/* Advanced: context, max_tokens, temperature */}
         <div className="grid grid-cols-3 gap-3">
-          {[
-            { key: 'context_length', label: 'Context Length', placeholder: '4096' },
-            { key: 'max_tokens', label: 'Max Tokens', placeholder: '2048' },
-            { key: 'temperature', label: 'Temperature', placeholder: '0.7' },
-          ].map(({ key, label, placeholder }) => (
-            <div key={key}>
-              <label className="block text-xs text-slate-500 mb-1.5 metric-value uppercase tracking-wider">{label}</label>
-              <input
-                value={form[key as keyof FormData] as string}
-                onChange={e => set(key as keyof FormData, e.target.value)}
-                placeholder={placeholder}
-                className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
-              />
-            </div>
-          ))}
+          {/* Context Length — with max context hint */}
+          <div>
+            {(() => {
+              const maxCtx = getMaxContext(form.model_id);
+              return (
+                <>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs text-slate-500 metric-value uppercase tracking-wider">Context Length</label>
+                    {maxCtx && (
+                      <button
+                        type="button"
+                        onClick={() => set('context_length', String(maxCtx))}
+                        className="text-xs px-1.5 py-0.5 rounded metric-value transition-all hover:opacity-80"
+                        style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.3)', color: '#06B6D4' }}
+                        title={`Max for this model: ${maxCtx.toLocaleString()} tokens`}
+                      >
+                        max {formatCtx(maxCtx)}
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    value={form.context_length}
+                    onChange={e => set('context_length', e.target.value)}
+                    placeholder="4096"
+                    type="number"
+                    className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
+                    style={{
+                      background: 'rgba(255,255,255,0.04)',
+                      border: maxCtx && parseInt(form.context_length) > maxCtx
+                        ? '1px solid rgba(244,63,94,0.5)'
+                        : '1px solid rgba(255,255,255,0.1)',
+                    }}
+                  />
+                  {maxCtx && parseInt(form.context_length) > maxCtx && (
+                    <p className="text-xs mt-1" style={{ color: '#F43F5E' }}>
+                      Exceeds model max ({formatCtx(maxCtx)})
+                    </p>
+                  )}
+                  {maxCtx && (
+                    <p className="text-xs text-slate-600 mt-1">
+                      Provider max: {maxCtx.toLocaleString()} tokens
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+          {/* Max Tokens */}
+          <div>
+            <label className="block text-xs text-slate-500 mb-1.5 metric-value uppercase tracking-wider">Max Tokens</label>
+            <input
+              value={form.max_tokens}
+              onChange={e => set('max_tokens', e.target.value)}
+              placeholder="2048"
+              type="number"
+              className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+          </div>
+          {/* Temperature */}
+          <div>
+            <label className="block text-xs text-slate-500 mb-1.5 metric-value uppercase tracking-wider">Temperature</label>
+            <input
+              value={form.temperature}
+              onChange={e => set('temperature', e.target.value)}
+              placeholder="0.7"
+              type="number"
+              step="0.1"
+              min="0"
+              max="2"
+              className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+          </div>
         </div>
 
         {/* Pricing */}
