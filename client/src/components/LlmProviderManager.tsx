@@ -3,12 +3,13 @@
  * Dark navy-black, glass morphism, cyan/violet neon accents
  * Orbitron headers, JetBrains Mono metrics, Inter body
  * ============================================================= */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase, LlmProvider } from '@/lib/supabase';
+import { fetchModelsForProvider, ModelOption } from '@/lib/modelFetcher';
 import {
   X, Plus, Trash2, CheckCircle2, AlertCircle, Wifi, Globe,
   Server, Key, Edit2, Save, ToggleLeft, ToggleRight, Star, StarOff,
-  Zap, Loader2
+  Zap, Loader2, RefreshCw
 } from 'lucide-react';
 
 const PROVIDER_TYPES = [
@@ -362,11 +363,54 @@ function ProviderForm({
   } : { ...DEFAULT_FORM });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveModels, setLiveModels] = useState<ModelOption[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelFetchError, setModelFetchError] = useState<string | null>(null);
+  const [modelSearch, setModelSearch] = useState('');
 
   const typeInfo = providerTypeInfo(form.provider_type);
   const popularModels = POPULAR_MODELS[form.provider_type as ProviderTypeValue] || [];
 
   const set = (k: keyof FormData, v: string | string[]) => setForm(f => ({ ...f, [k]: v }));
+
+  // Fetch live models when provider type or API key changes
+  const doFetchModels = useCallback(async () => {
+    setFetchingModels(true);
+    setModelFetchError(null);
+    try {
+      const apiKey = form.api_key.trim() || (initial?.api_key || '');
+      const models = await fetchModelsForProvider(
+        form.provider_type,
+        apiKey,
+        form.base_url,
+        form.port,
+      );
+      setLiveModels(models);
+      if (models.length === 0) {
+        setModelFetchError(
+          form.provider_type === 'openrouter'
+            ? 'Could not reach OpenRouter API'
+            : apiKey ? 'No models returned — check your API key' : 'Enter API key to load live models'
+        );
+      }
+    } catch {
+      setModelFetchError('Fetch failed');
+    } finally {
+      setFetchingModels(false);
+    }
+  }, [form.provider_type, form.api_key, form.base_url, form.port, initial?.api_key]);
+
+  // Auto-fetch on mount and when provider type changes
+  useEffect(() => {
+    setLiveModels([]);
+    setModelSearch('');
+    doFetchModels();
+  }, [form.provider_type]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Filtered model list for search
+  const filteredModels = liveModels.filter(m =>
+    !modelSearch || m.id.toLowerCase().includes(modelSearch.toLowerCase()) || m.name.toLowerCase().includes(modelSearch.toLowerCase())
+  );
 
   const toggleCap = (cap: string) => {
     set('capabilities', form.capabilities.includes(cap)
@@ -482,9 +526,22 @@ function ProviderForm({
           />
         </div>
 
-        {/* Model ID */}
+        {/* Model ID — with live model picker */}
         <div>
-          <label className="block text-xs text-slate-500 mb-1.5 metric-value uppercase tracking-wider">Model ID</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs text-slate-500 metric-value uppercase tracking-wider">Model ID</label>
+            <button
+              type="button"
+              onClick={doFetchModels}
+              disabled={fetchingModels}
+              className="flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-all disabled:opacity-50"
+              style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', color: '#06B6D4' }}
+            >
+              {fetchingModels ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+              {fetchingModels ? 'Fetching…' : `Refresh${liveModels.length > 0 ? ` (${liveModels.length})` : ''}`}
+            </button>
+          </div>
+          {/* Manual input always available */}
           <input
             value={form.model_id}
             onChange={e => set('model_id', e.target.value)}
@@ -492,10 +549,69 @@ function ProviderForm({
             className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
           />
-          {popularModels.length > 0 && (
+          {/* Live model list */}
+          {liveModels.length > 0 && (
+            <div className="mt-2 rounded overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.25)' }}>
+              {/* Search */}
+              <div className="px-2 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <input
+                  value={modelSearch}
+                  onChange={e => setModelSearch(e.target.value)}
+                  placeholder={`Search ${liveModels.length} models…`}
+                  className="w-full bg-transparent text-xs text-slate-300 outline-none metric-value"
+                  style={{ fontFamily: 'JetBrains Mono, monospace' }}
+                />
+              </div>
+              {/* Model rows */}
+              <div className="overflow-y-auto" style={{ maxHeight: '200px' }}>
+                {filteredModels.slice(0, 80).map(m => {
+                  const isSelected = form.model_id === m.id;
+                  const ctxHint = m.context_length ? formatCtx(m.context_length) : null;
+                  const costHint = m.input_cost_per_million !== undefined
+                    ? `$${m.input_cost_per_million}/M in`
+                    : null;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        set('model_id', m.id);
+                        // Auto-fill pricing if available from API
+                        if (m.input_cost_per_million !== undefined) set('input_cost_per_million', String(m.input_cost_per_million));
+                        if (m.output_cost_per_million !== undefined) set('output_cost_per_million', String(m.output_cost_per_million));
+                        // Auto-fill context length if available
+                        if (m.context_length) set('context_length', String(m.context_length));
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-1.5 text-left transition-all hover:bg-white/5"
+                      style={{
+                        background: isSelected ? 'rgba(6,182,212,0.08)' : 'transparent',
+                        borderLeft: isSelected ? '2px solid #06B6D4' : '2px solid transparent',
+                      }}
+                    >
+                      <span className="text-xs metric-value truncate" style={{ color: isSelected ? '#06B6D4' : '#94A3B8', maxWidth: '60%' }}>{m.id}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {ctxHint && <span className="text-[10px] metric-value" style={{ color: '#475569' }}>{ctxHint}</span>}
+                        {costHint && <span className="text-[10px] metric-value" style={{ color: '#10B981' }}>{costHint}</span>}
+                        {isSelected && <CheckCircle2 size={10} style={{ color: '#06B6D4' }} />}
+                      </div>
+                    </button>
+                  );
+                })}
+                {filteredModels.length > 80 && (
+                  <div className="px-3 py-1.5 text-xs text-slate-600">…{filteredModels.length - 80} more — refine search</div>
+                )}
+              </div>
+            </div>
+          )}
+          {/* Error or loading hint */}
+          {modelFetchError && liveModels.length === 0 && (
+            <p className="text-xs mt-1.5" style={{ color: '#64748B' }}>{modelFetchError}</p>
+          )}
+          {/* Fallback static quick-picks if no live models */}
+          {liveModels.length === 0 && !fetchingModels && popularModels.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {popularModels.map(m => (
-                <button key={m} onClick={() => set('model_id', m)} className="text-xs px-2 py-0.5 rounded transition-all hover:bg-white/5" style={{ color: '#06B6D4', border: '1px solid rgba(6,182,212,0.2)' }}>{m}</button>
+                <button key={m} type="button" onClick={() => set('model_id', m)} className="text-xs px-2 py-0.5 rounded transition-all hover:bg-white/5" style={{ color: '#06B6D4', border: '1px solid rgba(6,182,212,0.2)' }}>{m}</button>
               ))}
             </div>
           )}

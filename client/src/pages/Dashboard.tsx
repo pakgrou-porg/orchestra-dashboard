@@ -103,6 +103,15 @@ function DatasetRow({ ds, index, onReview, onGenerate, onEdit, onClone }: { ds: 
   const taskIcon = ds.task_type === 'sql_correction' ? FileCode2 : Shield;
   const TaskIcon = taskIcon;
 
+  // Subscribe to generation store to know if THIS dataset is currently generating
+  const genState = useSyncExternalStore(
+    generationStore.subscribe.bind(generationStore),
+    generationStore.getState.bind(generationStore),
+  );
+  const isThisGenerating = genState.stage === 'running' && genState.datasetId === ds.id;
+  const isThisDone = genState.stage === 'done' && genState.datasetId === ds.id;
+  const otherGenerating = genState.stage === 'running' && genState.datasetId !== ds.id;
+
   const downloadAll = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const { supabase } = await import('@/lib/supabase');
@@ -154,11 +163,18 @@ function DatasetRow({ ds, index, onReview, onGenerate, onEdit, onClone }: { ds: 
             {(ds.status === 'draft' || ds.status === 'generating') && (
               <button
                 onClick={(e) => { e.stopPropagation(); onGenerate(ds); }}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all"
-                style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', color: '#10B981' }}
-                title="Generate dataset samples"
+                disabled={otherGenerating}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: isThisGenerating ? 'rgba(6,182,212,0.1)' : isThisDone ? 'rgba(16,185,129,0.1)' : 'rgba(16,185,129,0.1)',
+                  border: `1px solid ${isThisGenerating ? 'rgba(6,182,212,0.35)' : isThisDone ? 'rgba(16,185,129,0.35)' : 'rgba(16,185,129,0.3)'}`,
+                  color: isThisGenerating ? '#06B6D4' : '#10B981',
+                }}
+                title={isThisGenerating ? 'View running generation' : otherGenerating ? `${genState.datasetName} is generating — wait for it to complete` : 'Generate dataset samples'}
               >
-                <Play size={11} /> Generate
+                {isThisGenerating
+                  ? <><Loader2 size={11} className="animate-spin" /> View Progress</>  
+                  : <><Play size={11} /> Generate</>}
               </button>
             )}
             {ds.status === 'draft' && (
@@ -292,14 +308,23 @@ function DatasetRow({ ds, index, onReview, onGenerate, onEdit, onClone }: { ds: 
                     </div>
                   </div>
                   {hasNoSamples && (
-                    <div className="mt-3 p-2 rounded" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
-                      <div className="text-[10px] text-amber-400 mb-2">⚠ No samples generated — dataset needs to be populated</div>
+                    <div className="mt-3 p-2 rounded" style={{ background: isThisGenerating ? 'rgba(6,182,212,0.07)' : 'rgba(245,158,11,0.08)', border: `1px solid ${isThisGenerating ? 'rgba(6,182,212,0.25)' : 'rgba(245,158,11,0.25)'}` }}>
+                      <div className="text-[10px] mb-2" style={{ color: isThisGenerating ? '#06B6D4' : '#F59E0B' }}>
+                        {isThisGenerating ? `⚡ Generating… ${genState.completedSamples}/${genState.totalSamples} samples` : '⚠ No samples generated — dataset needs to be populated'}
+                      </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); onGenerate(ds); }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs w-full justify-center transition-all"
-                        style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.35)', color: '#10B981' }}
+                        disabled={otherGenerating}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs w-full justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{
+                          background: isThisGenerating ? 'rgba(6,182,212,0.12)' : 'rgba(16,185,129,0.12)',
+                          border: `1px solid ${isThisGenerating ? 'rgba(6,182,212,0.35)' : 'rgba(16,185,129,0.35)'}`,
+                          color: isThisGenerating ? '#06B6D4' : '#10B981',
+                        }}
                       >
-                        <Play size={11} /> Generate Samples
+                        {isThisGenerating
+                          ? <><Loader2 size={11} className="animate-spin" /> View Progress</>
+                          : <><Play size={11} /> Generate Samples</>}
                       </button>
                     </div>
                   )}
