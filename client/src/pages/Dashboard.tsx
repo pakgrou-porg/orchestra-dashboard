@@ -21,7 +21,7 @@ import {
   ChevronRight, GitBranch, Eye, Download, Plus, Play, Edit2, Copy, Settings2, Clock, Layers, BookOpen, ChevronDown, ChevronUp
 } from 'lucide-react';
 
-const HERO_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-hero-bg-jQ87DWT7KT9qkuMrJQAC6d.webp';
+const HERO_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-hero-bg-JrMSgx5cYrB7Hr8w7yiaVr.webp';
 const SIDEBAR_BG = 'https://d2xsxph8kpxj0f.cloudfront.net/310519663252637644/H5L46992Uxp4RipEv5JscA/orchestra-sidebar-glow-BgftYdjdGVMVxco7tvCJqN.webp';
 
 // ─── Animated Counter ──────────────────────────────────────────
@@ -721,16 +721,19 @@ export default function Dashboard() {
         {/* Hero Banner */}
         <div
           className="relative overflow-hidden"
-          style={{ height: '180px', backgroundImage: `url(${HERO_BG})`, backgroundSize: 'cover', backgroundPosition: 'center 30%' }}
+          style={{ height: '220px', backgroundImage: `url(${HERO_BG})`, backgroundSize: 'cover', backgroundPosition: 'center 45%' }}
         >
-          <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, rgba(7,11,20,0.85) 0%, rgba(7,11,20,0.4) 60%, rgba(7,11,20,0.7) 100%)' }} />
+          {/* Dark gradient overlay — heavier on left for text legibility, fades to reveal art on right */}
+          <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, rgba(5,10,20,0.92) 0%, rgba(5,10,20,0.65) 40%, rgba(5,10,20,0.25) 70%, rgba(5,10,20,0.5) 100%)' }} />
+          {/* Bottom fade to blend into content */}
+          <div className="absolute bottom-0 left-0 right-0" style={{ height: '60px', background: 'linear-gradient(to bottom, transparent, rgba(7,11,20,0.95))' }} />
           <div className="relative z-10 flex flex-col justify-center h-full px-8">
-            <div className="text-xs text-slate-400 metric-value mb-1 tracking-widest">PHASE 1 COMPLETE</div>
-            <h1 style={{ fontFamily: 'Orbitron, monospace', fontSize: '1.6rem', fontWeight: 900, color: '#fff', letterSpacing: '0.06em', lineHeight: 1.2 }}>
+            <div className="text-xs metric-value mb-1 tracking-widest" style={{ color: '#06B6D4', opacity: 0.8 }}>ORCHESTRA FRAMEWORK</div>
+            <h1 style={{ fontFamily: 'Orbitron, monospace', fontSize: '1.75rem', fontWeight: 900, color: '#fff', letterSpacing: '0.06em', lineHeight: 1.2 }}>
               COMPOSER <span style={{ color: '#06B6D4' }}>OPERATIONAL</span>
             </h1>
-            <p className="text-slate-400 text-sm mt-2 max-w-xl">
-              Dataset registry live · Supabase connected · 2 datasets validated · Ready for Conductor
+            <p className="text-sm mt-2" style={{ color: 'rgba(148,163,184,0.85)', maxWidth: '480px' }}>
+              Dataset registry live · Supabase connected · Ready for Conductor
             </p>
           </div>
         </div>
