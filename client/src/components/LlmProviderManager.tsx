@@ -5,6 +5,7 @@
  * ============================================================= */
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, LlmProvider } from '@/lib/supabase';
+import { toast } from 'sonner';
 import { fetchModelsForProvider, ModelOption } from '@/lib/modelFetcher';
 import {
   X, Plus, Trash2, CheckCircle2, AlertCircle, Wifi, Globe,
@@ -984,21 +985,38 @@ export default function LlmProviderManager({
 
   const handleDelete = async (id: string) => {
     setDeleting(id);
-    await supabase.from('llm_providers').delete().eq('id', id);
-    setDeleting(null);
-    onRefresh();
+    try {
+      const { error } = await supabase.from('llm_providers').delete().eq('id', id);
+      if (error) throw new Error(error.message);
+      onRefresh();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete provider');
+    } finally {
+      setDeleting(null);
+    }
   };
 
   const handleToggleActive = async (p: LlmProvider) => {
-    await supabase.from('llm_providers').update({ is_active: !p.is_active }).eq('id', p.id);
-    onRefresh();
+    try {
+      const { error } = await supabase.from('llm_providers').update({ is_active: !p.is_active }).eq('id', p.id);
+      if (error) throw new Error(error.message);
+      onRefresh();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to toggle provider');
+    }
   };
 
   const handleSetDefault = async (p: LlmProvider) => {
-    // Clear all defaults, then set this one
-    await supabase.from('llm_providers').update({ is_default: false }).neq('id', '');
-    await supabase.from('llm_providers').update({ is_default: true }).eq('id', p.id);
-    onRefresh();
+    try {
+      // Clear all defaults, then set this one
+      const { error: clearErr } = await supabase.from('llm_providers').update({ is_default: false }).eq('is_default', true);
+      if (clearErr) throw new Error(clearErr.message);
+      const { error: setErr } = await supabase.from('llm_providers').update({ is_default: true }).eq('id', p.id);
+      if (setErr) throw new Error(setErr.message);
+      onRefresh();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to set default provider');
+    }
   };
 
   const activeProviders = providers.filter(p => p.is_active);

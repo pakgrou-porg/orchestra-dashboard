@@ -74,14 +74,18 @@ function writeToLogFile(source: LogSource, entries: unknown[]) {
  * - Files: browserConsole.log, networkRequests.log, sessionReplay.log
  * - Auto-trimmed when exceeding 1MB (keeps newest entries)
  */
-function vitePluginManusDebugCollector(): Plugin {
+/**
+ * Vite plugin to collect browser debug logs — dev only.
+ * Strip it from production builds entirely to avoid any
+ * attack surface from the /__manus__/ endpoint.
+ */
+function vitePluginManusDebugCollector(): Plugin | false {
+  // Never include in production builds
+  if (process.env.NODE_ENV === "production") return false;
   return {
     name: "manus-debug-collector",
 
     transformIndexHtml(html) {
-      if (process.env.NODE_ENV === "production") {
-        return html;
-      }
       return {
         html,
         tags: [

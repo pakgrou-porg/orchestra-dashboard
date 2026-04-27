@@ -571,11 +571,8 @@ export default function Dashboard() {
 
   const handleCloneDataset = async (ds: Dataset) => {
     const { supabase } = await import('@/lib/supabase');
-    // Find a unique copy name
-    const existingNames = datasets.map(d => d.name);
-    let copyName = `${ds.name}-copy1`;
-    let n = 1;
-    while (existingNames.includes(copyName)) { n++; copyName = `${ds.name}-copy${n}`; }
+    // Use a unique timestamp suffix to avoid race conditions with concurrent clones
+    const copyName = `${ds.name}-copy-${Date.now()}`;
     const clone = {
       name: copyName,
       version: ds.version,
@@ -590,7 +587,12 @@ export default function Dashboard() {
       format: ds.format || 'jsonl',
       generation_config: ds.generation_config || {},
     };
-    await supabase.from('datasets').insert(clone);
+    const { error } = await supabase.from('datasets').insert(clone);
+    if (error) {
+      const { toast } = await import('sonner');
+      toast.error(`Clone failed: ${error.message}`);
+      return;
+    }
     refresh();
   };
   const totalSamples = datasets.reduce((s, d) => s + d.num_train + d.num_eval, 0);

@@ -1,8 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = 'https://domrhrldlufshogewfbp.supabase.co';
-// Using the publishable key (safe for frontend) — RLS policies control access
-const SUPABASE_ANON_KEY = 'sb_publishable_1SFDQxtGTKtCPRrLW_prdA_zgTIibZj';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://domrhrldlufshogewfbp.supabase.co';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 

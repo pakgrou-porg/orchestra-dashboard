@@ -69,7 +69,7 @@ export function buildHeaders(provider: LlmProvider): Record<string, string> {
   // Anthropic uses a different auth header
   if (provider.provider_type === 'anthropic' && key) {
     headers['x-api-key'] = key;
-    headers['anthropic-version'] = '2023-06-01';
+    headers['anthropic-version'] = '2024-06-01';
     delete headers['Authorization'];
   }
   // OpenRouter requires HTTP-Referer and X-Title for ranking
@@ -100,6 +100,7 @@ export interface ChatCompletionOptions {
 export async function chatCompletion(
   provider: LlmProvider,
   options: ChatCompletionOptions,
+  signal?: AbortSignal,
 ): Promise<string> {
   const endpoint = buildChatEndpoint(provider);
   const headers = buildHeaders(provider);
@@ -120,6 +121,7 @@ export async function chatCompletion(
     method:  'POST',
     headers,
     body:    JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok) {

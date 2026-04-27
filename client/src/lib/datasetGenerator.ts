@@ -122,10 +122,10 @@ export async function generateDataset(
   const categories: Category[] = cfg.categories || [];
   const systemPrompt = buildSystemPrompt(cfg);
 
-  // Derive total sample counts from generation_config when dataset metadata is 0
+  // Derive total sample counts from generation_config when dataset metadata is absent
   // Priority: dataset.num_train/num_eval → cfg.num_train/num_eval → computed from categories (80/20 split)
-  let totalTrain = dataset.num_train || cfg.num_train || 0;
-  let totalEval = dataset.num_eval || cfg.num_eval || 0;
+  let totalTrain = dataset.num_train ?? cfg.num_train ?? 0;
+  let totalEval = dataset.num_eval ?? cfg.num_eval ?? 0;
   if (totalTrain === 0 && totalEval === 0 && categories.length > 0) {
     const totalFromCats = categories.reduce((sum, c) => sum + (c.count || 0), 0);
     const trainSplit = cfg.train_split ?? 0.8;
@@ -195,6 +195,8 @@ export async function generateDataset(
         await semaphore.acquire();
         try {
           if (signal?.aborted) return;
+          const controller = new AbortController();
+          signal?.addEventListener('abort', () => controller.abort(), { once: true });
           const userPrompt = buildUserPrompt(dataset, category, catIdx, 'train', cfg);
           const raw = await chatCompletion(provider, {
             messages: [
@@ -203,7 +205,7 @@ export async function generateDataset(
             ],
             maxTokens: provider.max_tokens || 1024,
             temperature: provider.temperature ?? 0.7,
-          });
+          }, controller.signal);
 
           const parsed = parseGeneratedSample(raw);
           trainSamples.push({
@@ -277,6 +279,8 @@ export async function generateDataset(
         await semaphore.acquire();
         try {
           if (signal?.aborted) return;
+          const controller = new AbortController();
+          signal?.addEventListener('abort', () => controller.abort(), { once: true });
           const userPrompt = buildUserPrompt(dataset, category, catIdx, 'eval', cfg);
           const raw = await chatCompletion(provider, {
             messages: [
@@ -285,7 +289,7 @@ export async function generateDataset(
             ],
             maxTokens: provider.max_tokens || 1024,
             temperature: Math.max(0.3, (provider.temperature ?? 0.7) - 0.1),
-          });
+          }, controller.signal);
 
           const parsed = parseGeneratedSample(raw);
           evalSamples.push({
