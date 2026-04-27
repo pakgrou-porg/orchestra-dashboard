@@ -340,7 +340,7 @@ function DatasetRow({ ds, index, onReview, onGenerate, onEdit, onClone }: { ds: 
 
 // ─── Hardware Card ─────────────────────────────────────────────
 function HardwareCard({ hw, index }: { hw: HardwareProfile; index: number }) {
-  const isGpu = hw.vram_gb <= 24;
+  const isGpu = hw.vram_gb > 0 && hw.gpu_model && hw.gpu_model !== 'none';
   const accentColor = isGpu ? '#06B6D4' : '#7C3AED';
   return (
     <div
