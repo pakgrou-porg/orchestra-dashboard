@@ -9,7 +9,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useOrchestra } from '@/hooks/useOrchestra';
 import { Dataset, HardwareProfile, LlmProvider } from '@/lib/supabase';
 import DatasetReviewPanel from '@/components/DatasetReviewPanel';
-import CreateDatasetPanel from '@/components/CreateDatasetPanel';
+import CreateDatasetPanel from '@/components/createDataset/CreateDatasetPanel';
 import GenerateDatasetPanel from '@/components/GenerateDatasetPanel';
 import EditDatasetPanel from '@/components/EditDatasetPanel';
 import LlmProviderManager from '@/components/LlmProviderManager';
