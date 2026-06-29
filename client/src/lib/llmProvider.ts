@@ -14,6 +14,7 @@
  * ============================================================= */
 
 import type { LlmProvider } from './supabase';
+import { getProviderKey } from './providerSecrets';
 
 /** Provider types that run locally and need port injection */
 const LOCAL_PROVIDER_TYPES = new Set(['lmstudio_local', 'lmstudio_network', 'custom']);
@@ -58,11 +59,27 @@ export function buildChatEndpoint(provider: LlmProvider): string {
   return `${base}/v1/chat/completions`;
 }
 
+/**
+ * Resolve the raw API key for a provider.
+ * Precedence: browser-local secret store (preferred — never leaves the client),
+ * then any legacy plaintext value still present on the DB row (deprecated).
+ */
+export function resolveProviderKey(provider: LlmProvider): string | null {
+  return (
+    getProviderKey(provider.id) ||
+    provider.api_key ||
+    provider.api_key_encrypted ||
+    null
+  );
+}
+
 /** Build request headers for the provider */
 export function buildHeaders(provider: LlmProvider): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  // Prefer api_key (actual key), fall back to api_key_encrypted, then api_key_hint (masked — will fail auth)
-  const key = provider.api_key || provider.api_key_encrypted || null;
+  // Resolve the key from the browser-local secret store first; fall back to any
+  // legacy DB value for backward compatibility. The api_key_hint is masked and
+  // intentionally never used for auth.
+  const key = resolveProviderKey(provider);
   if (key) {
     headers['Authorization'] = `Bearer ${key}`;
   }

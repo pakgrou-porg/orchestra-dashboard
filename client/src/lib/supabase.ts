@@ -44,9 +44,12 @@ export type LlmProvider = {
   display_name: string;
   base_url: string | null;
   model_id: string;
-  api_key_hint: string | null;
-  api_key: string | null;  // actual key stored in DB (use this for auth)
-  api_key_encrypted: string | null;  // legacy encrypted field
+  api_key_hint: string | null;  // masked hint only (safe to store in DB)
+  // SECURITY: raw provider keys are NO LONGER written to the DB. They live in the
+  // browser-local secret store (see lib/providerSecrets.ts). These fields remain
+  // only to read legacy rows written before the secure-by-default change.
+  api_key: string | null;  // @deprecated legacy plaintext key (do not write)
+  api_key_encrypted: string | null;  // @deprecated legacy encrypted field
   quick_register_source: string | null;
   port: number | null;
   context_length: number;

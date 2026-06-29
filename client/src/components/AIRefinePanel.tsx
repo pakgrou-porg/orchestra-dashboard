@@ -43,13 +43,14 @@ export interface AIAnalysis {
 }
 
 export interface LlmProviderConfig {
+  id: string;                        // provider id (used to look up the browser-local key)
   provider_type: string;
   base_url: string | null;
   port: number | null;
   model_id: string;
   api_key_hint: string | null;
-  api_key: string | null;           // actual key for auth
-  api_key_encrypted: string | null; // legacy encrypted field
+  api_key: string | null;           // @deprecated legacy plaintext key
+  api_key_encrypted: string | null; // @deprecated legacy encrypted field
   display_name: string;
 }
 

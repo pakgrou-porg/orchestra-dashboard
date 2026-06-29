@@ -5,6 +5,7 @@
  * ============================================================= */
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, LlmProvider } from '@/lib/supabase';
+import { setProviderKey, clearProviderKey, buildKeyHint, getProviderKey } from '@/lib/providerSecrets';
 import { toast } from 'sonner';
 import { fetchModelsForProvider, ModelOption } from '@/lib/modelFetcher';
 import {
@@ -379,7 +380,9 @@ function ProviderForm({
     setFetchingModels(true);
     setModelFetchError(null);
     try {
-      const apiKey = form.api_key.trim() || (initial?.api_key || '');
+      const apiKey =
+        form.api_key.trim() ||
+        (initial ? getProviderKey(initial.id) || initial.api_key || '' : '');
       const models = await fetchModelsForProvider(
         form.provider_type,
         apiKey,
@@ -399,7 +402,7 @@ function ProviderForm({
     } finally {
       setFetchingModels(false);
     }
-  }, [form.provider_type, form.api_key, form.base_url, form.port, initial?.api_key]);
+  }, [form.provider_type, form.api_key, form.base_url, form.port, initial]);
 
   // Auto-fetch on mount and when provider type changes
   useEffect(() => {
@@ -430,13 +433,17 @@ function ProviderForm({
       const inputCost = parseFloat(form.input_cost_per_million) || 0;
       const outputCost = parseFloat(form.output_cost_per_million) || 0;
       const existingMeta = (initial?.metadata || {}) as Record<string, unknown>;
+      const rawKey = form.api_key.trim();
       const payload: Record<string, unknown> = {
         display_name: form.display_name.trim(),
         provider_type: form.provider_type,
         model_id: form.model_id.trim(),
         base_url: form.base_url.trim() || typeInfo.urlPlaceholder,
         port: form.port ? parseInt(form.port) : null,
-        api_key_hint: form.api_key ? `${form.api_key.slice(0, 6)}...${form.api_key.slice(-4)}` : (initial?.api_key_hint ?? null),
+        // SECURITY: only the masked hint is persisted to the shared DB. The raw
+        // key is kept in the browser-local secret store (see providerSecrets.ts)
+        // and never written to Supabase.
+        api_key_hint: rawKey ? buildKeyHint(rawKey) : (initial?.api_key_hint ?? null),
         context_length: parseInt(form.context_length) || 4096,
         max_tokens: parseInt(form.max_tokens) || 2048,
         temperature: parseFloat(form.temperature) || 0.7,
@@ -448,18 +455,22 @@ function ProviderForm({
           output_cost_per_million: outputCost,
         },
       };
-      // Store actual API key if provided (never blank out an existing key on edit)
-      if (form.api_key.trim()) {
-        payload.api_key = form.api_key.trim();
+
+      let providerId: string | undefined;
+      if (initial) {
+        const res = await supabase.from('llm_providers').update(payload).eq('id', initial.id);
+        if (res.error) throw new Error(res.error.message);
+        providerId = initial.id;
+      } else {
+        const res = await supabase.from('llm_providers').insert(payload).select('id').single();
+        if (res.error) throw new Error(res.error.message);
+        providerId = (res.data as { id?: string } | null)?.id;
       }
 
-      let res;
-      if (initial) {
-        res = await supabase.from('llm_providers').update(payload).eq('id', initial.id);
-      } else {
-        res = await supabase.from('llm_providers').insert(payload);
+      // Persist the raw key locally (only if the user entered one this time).
+      if (rawKey && providerId) {
+        setProviderKey(providerId, rawKey);
       }
-      if (res.error) throw new Error(res.error.message);
       onSave();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Save failed');
@@ -663,7 +674,7 @@ function ProviderForm({
               className="w-full px-3 py-2 rounded text-sm text-slate-200 bg-transparent outline-none metric-value"
               style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
             />
-            <p className="text-xs text-slate-600 mt-1">Key is stored in Supabase (RLS-protected). A masked hint is shown in the UI for reference.</p>
+            <p className="text-xs text-slate-600 mt-1">Key is stored only in this browser (local storage) and is never sent to the shared database. Only a masked hint is saved server-side. You will need to re-enter it on other devices/browsers.</p>
           </div>
         )}
 
@@ -948,14 +959,15 @@ export default function LlmProviderManager({
     setQuickError(null);
     try {
       const modelLabel = quickPreset.models.find(m => m.id === quickModel)?.label || quickModel;
+      const rawKey = quickKey.trim();
       const payload = {
         display_name: `${quickPreset.label} — ${modelLabel}`,
         provider_type: quickPreset.provider_type,
         model_id: quickModel,
         base_url: quickPreset.base_url,
         port: null,
-        api_key: quickKey.trim(),
-        api_key_hint: `${quickKey.trim().slice(0, 8)}...${quickKey.trim().slice(-4)}`,
+        // SECURITY: persist only the masked hint; the raw key stays browser-local.
+        api_key_hint: buildKeyHint(rawKey),
         context_length: 128000,
         max_tokens: 4096,
         temperature: 0.3,
@@ -965,8 +977,10 @@ export default function LlmProviderManager({
         quick_register_source: quickPreset.id,
         name: `${quickPreset.provider_type}_${quickModel.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${Date.now()}`,
       };
-      const { error } = await supabase.from('llm_providers').insert(payload);
+      const { data, error } = await supabase.from('llm_providers').insert(payload).select('id').single();
       if (error) throw new Error(error.message);
+      const newId = (data as { id?: string } | null)?.id;
+      if (newId && rawKey) setProviderKey(newId, rawKey);
       setQuickSuccess(true);
       setTimeout(() => {
         setShowQuickSetup(false);
@@ -988,6 +1002,8 @@ export default function LlmProviderManager({
     try {
       const { error } = await supabase.from('llm_providers').delete().eq('id', id);
       if (error) throw new Error(error.message);
+      // Remove any browser-local key for this provider.
+      clearProviderKey(id);
       onRefresh();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete provider');
@@ -1132,7 +1148,7 @@ export default function LlmProviderManager({
 
                   {/* API key input */}
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">API Key <span className="text-slate-600">(stored in Supabase, RLS-protected)</span></label>
+                    <label className="text-xs text-slate-500">API Key <span className="text-slate-600">(stored only in this browser, never in the database)</span></label>
                     <input
                       type="password"
                       value={quickKey}

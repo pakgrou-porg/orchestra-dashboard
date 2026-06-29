@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { supabase, LlmProvider } from '@/lib/supabase';
+import { getProviderKey } from '@/lib/providerSecrets';
 import AIRefinePanel from '@/components/AIRefinePanel';
 import {
   X, ChevronRight, ChevronLeft, Check, Loader2,
@@ -32,7 +33,14 @@ export default function CreateDatasetPanel({ onClose, onCreated }: Props) {
       .then(({ data }) => {
         if (!data || data.length === 0) return;
         const providers = data as LlmProvider[];
-        const withKey = providers.filter(p => p.api_key && p.api_key.length > 10);
+        // A provider is usable if a raw key exists in the browser-local secret
+        // store (preferred) or as a legacy DB value, or if it needs no key at all.
+        const withKey = providers.filter(p => {
+          const localKey = getProviderKey(p.id);
+          const legacyKey = p.api_key;
+          const noKeyNeeded = p.provider_type === 'lmstudio_local' || p.provider_type === 'lmstudio_network';
+          return noKeyNeeded || (localKey && localKey.length > 10) || (legacyKey && legacyKey.length > 10);
+        });
         const best = withKey.find(p => p.is_default)
           || withKey[0]
           || providers.find(p => p.is_default)

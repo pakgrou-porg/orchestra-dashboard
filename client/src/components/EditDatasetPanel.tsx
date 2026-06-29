@@ -9,6 +9,7 @@
  * ============================================================= */
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, Dataset, LlmProvider } from '@/lib/supabase';
+import { getProviderKey } from '@/lib/providerSecrets';
 import { buildChatEndpoint, buildHeaders, parseJsonResponse } from '@/lib/llmProvider';
 import {
   X, Save, AlertCircle, CheckCircle2, Sparkles, Loader2,
@@ -293,8 +294,14 @@ export default function EditDatasetPanel({
       .then(({ data }) => {
         if (!data || data.length === 0) return;
         const providers = data as LlmProvider[];
-        // Prefer: has real api_key → is_default → first active
-        const withKey = providers.filter(p => p.api_key && p.api_key.length > 10);
+        // Prefer a provider with a usable key: browser-local secret store
+        // (preferred), legacy DB value, or a local provider that needs no key.
+        const withKey = providers.filter(p => {
+          const localKey = getProviderKey(p.id);
+          const legacyKey = p.api_key;
+          const noKeyNeeded = p.provider_type === 'lmstudio_local' || p.provider_type === 'lmstudio_network';
+          return noKeyNeeded || (localKey && localKey.length > 10) || (legacyKey && legacyKey.length > 10);
+        });
         const best = withKey.find(p => p.is_default)
           || withKey[0]
           || providers.find(p => p.is_default)

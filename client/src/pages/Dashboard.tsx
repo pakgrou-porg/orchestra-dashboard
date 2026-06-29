@@ -8,6 +8,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useOrchestra } from '@/hooks/useOrchestra';
 import { Dataset, HardwareProfile, LlmProvider } from '@/lib/supabase';
+import { getProviderKey } from '@/lib/providerSecrets';
 import DatasetReviewPanel from '@/components/DatasetReviewPanel';
 import CreateDatasetPanel from '@/components/createDataset/CreateDatasetPanel';
 import GenerateDatasetPanel from '@/components/GenerateDatasetPanel';
@@ -419,7 +420,8 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 function ConductorCard({ c, index }: { c: LlmProvider; index: number }) {
   const color = PROVIDER_COLORS[c.provider_type] || '#64748B';
-  const hasKey = !!(c.api_key || c.api_key_hint);
+  const localKey = !!getProviderKey(c.id);
+  const hasKey = localKey || !!c.api_key || !!c.api_key_hint;
   return (
     <div
       className="glass-card rounded-lg p-4 card-enter"
@@ -467,7 +469,7 @@ function ConductorCard({ c, index }: { c: LlmProvider; index: number }) {
         <div className="flex justify-between text-xs">
           <span className="text-slate-500">API Key</span>
           <span className="metric-value" style={{ color: hasKey ? '#10B981' : '#EF4444' }}>
-            {hasKey ? (c.api_key ? 'Stored ✓' : 'Hint only') : 'Not set'}
+            {localKey ? 'Stored locally ✓' : hasKey ? 'Hint only' : 'Not set'}
           </span>
         </div>
         {c.capabilities && c.capabilities.length > 0 && (
